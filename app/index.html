@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>个人开发任务看板</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <h1>个人开发任务看板</h1>
+  </div>
+  <div class="topbar-search">
+    <input id="searchInput" type="text" placeholder="搜索任务标题…" autocomplete="off">
+  </div>
+  <div class="topbar-actions">
+    <button class="btn btn-primary" data-action="new-task">＋ 新建任务</button>
+    <button class="btn" data-action="manage-statuses">状态管理</button>
+    <button class="btn" data-action="export-data">导出数据</button>
+  </div>
+</header>
+<nav class="tabs">
+  <button class="tab" data-view="board">看板 <span class="tab-count" id="countBoard">0</span></button>
+  <button class="tab" data-view="archive">归档箱 <span class="tab-count" id="countArchive">0</span></button>
+  <button class="tab" data-view="logs">操作日志 <span class="tab-count" id="countLogs">0</span></button>
+</nav>
+<main id="main"></main>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+<script src="/app.js"></script>
+</body>
+</html>

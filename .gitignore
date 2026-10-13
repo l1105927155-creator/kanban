@@ -1,0 +1,8 @@
+# 运行时数据（任务/状态/日志，含个人使用记录，不入库）
+data.json
+data.json.tmp
+data.json.broken-*
+
+# Python 缓存
+__pycache__/
+*.pyc
