@@ -8,10 +8,53 @@ import json
 import os
 import sys
 import time
+import socket
+import tempfile
+import subprocess
+import pathlib
 import urllib.error
 import urllib.request
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8737"
+BASE = sys.argv[1] if len(sys.argv) > 1 else None
+_test_dir = None
+_test_process = None
+
+def start_test_server():
+    global BASE, _test_dir, _test_process
+    _test_dir = tempfile.TemporaryDirectory(prefix="kanban-test-")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = os.environ.copy()
+    env["TASK_BOARD_DATA_DIR"] = _test_dir.name
+    env["TASK_BOARD_TEST_PORT"] = str(port)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    _test_process = subprocess.Popen(
+        [sys.executable, str(root / "server.py")],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    BASE = "http://127.0.0.1:%d" % port
+    for _ in range(80):
+        if _test_process.poll() is not None:
+            break
+        try:
+            with urllib.request.urlopen(BASE + "/api/health", timeout=0.2) as response:
+                if response.status == 200:
+                    return
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.1)
+    raise RuntimeError("隔离测试服务启动失败")
+
+def stop_test_server():
+    if _test_process is not None:
+        _test_process.terminate()
+        try:
+            _test_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            _test_process.kill()
+            _test_process.wait()
+    if _test_dir is not None:
+        _test_dir.cleanup()
+
 STAMP = time.strftime("%H%M%S")
 
 passed = 0
@@ -22,7 +65,7 @@ def req(method, path, body=None):
     url = BASE + path
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     request = urllib.request.Request(url, data=data, method=method,
-                                     headers={"Content-Type": "application/json"})
+                                     headers={"Content-Type": "application/json", "X-Board-Request": "1"})
     try:
         with urllib.request.urlopen(request, timeout=10) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
@@ -194,4 +237,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        if BASE is None:
+            start_test_server()
+        main()
+    finally:
+        stop_test_server()
