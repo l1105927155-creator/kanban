@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -69,9 +70,17 @@ def main():
     task = get_task(task_id) if task_id else None
     check("新增后可见", task is not None and task.get("title") == title_a, task)
 
-    # 5. 记录查看日志
+    # 5. 打开详情默认不新增“查看”日志
+    status, logs_snapshot = req("GET", "/api/logs")
+    logs_before = len(logs_snapshot.get("logs", []))
     status, _ = req("POST", "/api/tasks/%s/view" % task_id)
     check("查看操作返回 200", status == 200, status)
+    status, data = req("GET", "/api/logs")
+    new_view_logs = [l for l in data.get("logs", [])
+                     if l.get("taskId") == task_id and l.get("type") == "view"]
+    check("打开详情默认不记查看日志",
+          len(data.get("logs", [])) == logs_before and not new_view_logs,
+          (logs_before, len(data.get("logs", [])), new_view_logs))
 
     # 6. 修改标题与备注
     status, data = req("PATCH", "/api/tasks/%s" % task_id,
@@ -93,6 +102,20 @@ def main():
     # 8. 日志按时间倒序
     times = [l.get("at") for l in data.get("logs", [])]
     check("日志按时间倒序", times == sorted(times, reverse=True))
+
+    # 8b. 清理接口参数校验（ids 必须为列表，避免误删）
+    total_before = len(data.get("logs", []))
+    status, res = req("POST", "/api/logs/cleanup", {"since": "2099-01-01T00:00:00+08:00"})
+    check("清理接口缺少 ids 被拒绝(400)", status == 400, (status, res))
+    status, res = req("POST", "/api/logs/cleanup", {"ids": "not-a-list"})
+    check("清理接口 ids 非列表被拒绝(400)", status == 400, (status, res))
+
+    # 8c. 安全性：不存在的 id 不会误删任何日志
+    status, res = req("POST", "/api/logs/cleanup", {"ids": ["log-nonexistent-" + STAMP]})
+    check("清理不存在的 id：removed=0", status == 200 and res.get("removed") == 0, (status, res))
+    status, data = req("GET", "/api/logs")
+    check("清理不存在的 id：日志总数不变", len(data.get("logs", [])) == total_before,
+          (total_before, len(data.get("logs", []))))
 
     # 9. 归档 / 恢复
     status, _ = req("POST", "/api/tasks/%s/archive" % task_id)
@@ -135,13 +158,35 @@ def main():
     delete_logs = [l for l in data.get("logs", []) if l.get("taskId") == task_b]
     check("删除后日志保留", any(l.get("type") == "delete" for l in delete_logs), delete_logs)
 
-    # 16. 导出备份
-    status, data = req("GET", "/api/export")
-    check("导出数据", status == 200 and isinstance(data.get("tasks"), list)
-          and isinstance(data.get("logs"), list) and data.get("exportedAt"), list(data.keys()))
+    # 16. 导出备份（保存到本地 backup 目录并返回保存信息）
+    status, data = req("POST", "/api/export")
+    saved_ok = False
+    if status == 200 and data.get("file") and os.path.exists(data["file"]):
+        try:
+            with open(data["file"], encoding="utf-8") as fh:
+                saved = json.load(fh)
+            saved_ok = isinstance(saved.get("tasks"), list) and isinstance(saved.get("logs"), list)
+        except (OSError, json.JSONDecodeError):
+            saved_ok = False
+    check("导出数据", status == 200 and data.get("ok") is True and saved_ok, data)
 
-    # 清理：删除自检任务 A
+    # 17. 收尾：删除自检任务 A（此删除也会产生一条 delete 日志）
     req("DELETE", "/api/tasks/%s" % task_id)
+
+    # 18. 清理接口正向用例：按 id 删除本次自检产生的全部日志（同时保持现场干净）
+    status, data = req("GET", "/api/logs")
+    junk_ids = [l["id"] for l in data.get("logs", []) if l.get("taskId") in (task_id, task_b)]
+    base_count = len(data.get("logs", []))
+    check("收集到自检日志（任务A 5 条 + 任务B 2 条）", len(junk_ids) == 7, junk_ids)
+    status, res = req("POST", "/api/logs/cleanup", {"ids": junk_ids})
+    check("清理接口：按 id 删除自检日志",
+          status == 200 and res.get("removed") == len(junk_ids), (status, res, len(junk_ids)))
+    status, data = req("GET", "/api/logs")
+    left = data.get("logs", [])
+    check("清理接口：仅自检日志被删，其余原样保留",
+          len(left) == base_count - len(junk_ids)
+          and not any(l.get("taskId") in (task_id, task_b) for l in left),
+          (base_count, len(left)))
 
     print()
     print("自检完成：通过 %d 项，失败 %d 项" % (passed, failed))

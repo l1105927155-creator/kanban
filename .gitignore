@@ -3,6 +3,13 @@ data.json
 data.json.tmp
 data.json.broken-*
 
+# 运行中服务的端口（启动器读取用，每次启动生成）
+port.txt
+port.txt.tmp
+
+# 导出备份目录
+backup/
+
 # Python 缓存
 __pycache__/
 *.pyc

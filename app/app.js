@@ -9,6 +9,8 @@
     view: "board",   // board | archive | logs
     search: "",
     logType: "all",
+    logRange: "all",    // 日志时间范围：all | today | 7d | 30d
+    logKeyword: "",     // 日志变更内容关键词
     expandedCols: {} // 单列模式下已展开的栏目（按状态名）
   };
 
@@ -22,6 +24,12 @@
     delete: { label: "删除", cls: "t-delete" }
   };
   var FIELD_LABEL = { title: "标题", goal: "目标", note: "备注", status: "状态" };
+  var LOG_RANGES = [
+    ["all", "全部时间"],
+    ["today", "今天"],
+    ["7d", "最近 7 天"],
+    ["30d", "最近 30 天"]
+  ];
 
   // ---------- 基础工具 ----------
 
@@ -210,41 +218,97 @@
     }).join("") + '</div>';
   }
 
-  function renderLogs() {
-    var options = [["all", "全部类型"]].concat(Object.keys(LOG_TYPE_META).map(function (k) {
-      return [k, LOG_TYPE_META[k].label];
-    })).map(function (pair) {
-      return '<option value="' + pair[0] + '"' + (state.logType === pair[0] ? " selected" : "") + '>' +
-        pair[1] + '</option>';
-    }).join("");
+  function logRangeStart() {
+    // 当前时间范围筛选的起点（Date）；"全部时间" 返回 null
+    var now = new Date();
+    if (state.logRange === "today") {
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+    if (state.logRange === "7d") return new Date(now.getTime() - 7 * 86400000);
+    if (state.logRange === "30d") return new Date(now.getTime() - 30 * 86400000);
+    return null;
+  }
 
-    var list = state.logs.filter(function (log) {
+  function matchLogRange(log) {
+    var start = logRangeStart();
+    if (!start) return true;
+    var at = new Date(log.at);
+    return !isNaN(at.getTime()) && at >= start;
+  }
+
+  function logDetailText(log) {
+    // 变更内容文本（关键词搜索用：修改前后的值 + 快照字段值）
+    var parts = [];
+    (log.changes || []).forEach(function (c) {
+      parts.push(c.from || "");
+      parts.push(c.to || "");
+    });
+    var snap = log.snapshot || {};
+    parts.push(snap.title || "", snap.goal || "", snap.note || "", snap.status || "");
+    return parts.join("\n").toLowerCase();
+  }
+
+  function filteredLogs() {
+    var kw = state.logKeyword.toLowerCase();
+    return state.logs.filter(function (log) {
       if (state.logType !== "all" && log.type !== state.logType) return false;
+      if (!matchLogRange(log)) return false;
       if (state.search) {
         var t = taskById(log.taskId);
         var title = t ? (t.title || "") : (log.taskTitle || "");
         if (title.toLowerCase().indexOf(state.search.toLowerCase()) < 0) return false;
       }
+      if (kw && logDetailText(log).indexOf(kw) < 0) return false;
       return true;
     });
+  }
 
-    var toolbar = '<div class="logs-toolbar"><label>类型：<select id="logTypeFilter">' + options +
-      '</select></label><span class="logs-count">共 ' + list.length + ' 条</span></div>';
+  function logItemHtml(log) {
+    var meta = LOG_TYPE_META[log.type] || { label: log.type, cls: "" };
+    return '<div class="log-item">' +
+      '<div class="log-head"><span class="log-type ' + meta.cls + '">' + esc(meta.label) + '</span>' +
+      '<span class="log-time">' + esc(fmtFull(log.at)) + '</span></div>' +
+      '<div class="log-body">' + logBody(log) + '</div></div>';
+  }
 
+  function logsListHtml(list) {
     if (!list.length) {
-      return '<div class="logs-wrap">' + toolbar +
-        '<div class="empty-page">暂无符合条件的日志。<br>任务的每一次新增、查看、修改、归档、恢复、删除都会记录在这里。</div></div>';
+      return '<div class="empty-page">暂无符合条件的日志。<br>任务的每一次新增、修改、归档、恢复、删除都会记录在这里。</div>';
     }
+    return list.map(logItemHtml).join("");
+  }
 
-    var items = list.map(function (log) {
-      var meta = LOG_TYPE_META[log.type] || { label: log.type, cls: "" };
-      return '<div class="log-item">' +
-        '<div class="log-head"><span class="log-type ' + meta.cls + '">' + esc(meta.label) + '</span>' +
-        '<span class="log-time">' + esc(fmtFull(log.at)) + '</span></div>' +
-        '<div class="log-body">' + logBody(log) + '</div></div>';
+  function renderLogs() {
+    var typeOptions = [["all", "全部类型"]].concat(Object.keys(LOG_TYPE_META).map(function (k) {
+      return [k, LOG_TYPE_META[k].label];
+    })).map(function (pair) {
+      return '<option value="' + pair[0] + '"' + (state.logType === pair[0] ? " selected" : "") + '>' +
+        pair[1] + '</option>';
     }).join("");
+    var rangeOptions = LOG_RANGES.map(function (pair) {
+      return '<option value="' + pair[0] + '"' + (state.logRange === pair[0] ? " selected" : "") + '>' +
+        pair[1] + '</option>';
+    }).join("");
+    var list = filteredLogs();
+    var toolbar = '<div class="logs-toolbar">' +
+      '<label>类型：<select id="logTypeFilter">' + typeOptions + '</select></label>' +
+      '<label>时间：<select id="logTimeFilter">' + rangeOptions + '</select></label>' +
+      '<input id="logKeywordFilter" type="text" placeholder="搜索变更内容…" value="' + esc(state.logKeyword) + '" autocomplete="off">' +
+      '<span class="logs-count" id="logsCount">共 ' + list.length + ' 条</span>' +
+      '<button class="btn btn-sm btn-danger-ghost" data-action="cleanup-logs">清理当前列表</button>' +
+      '</div>';
+    return '<div class="logs-wrap">' + toolbar +
+      '<div class="logs-list" id="logsList">' + logsListHtml(list) + '</div></div>';
+  }
 
-    return '<div class="logs-wrap">' + toolbar + items + '</div>';
+  function updateLogsList() {
+    // 只刷新列表与计数，避免筛选控件（尤其是关键词输入框）失焦
+    var listEl = document.getElementById("logsList");
+    var countEl = document.getElementById("logsCount");
+    if (!listEl || !countEl) return;
+    var list = filteredLogs();
+    listEl.innerHTML = logsListHtml(list);
+    countEl.textContent = "共 " + list.length + " 条";
   }
 
   function logBody(log) {
@@ -522,13 +586,92 @@
     }).then(openStatusManager).catch(function (err) { toast(err.message, true); });
   }
 
+  function logRangeLabel(value) {
+    var label = "全部时间";
+    LOG_RANGES.forEach(function (pair) { if (pair[0] === value) label = pair[1]; });
+    return label;
+  }
+
+  function logFiltersActive() {
+    return state.logType !== "all" || state.logRange !== "all" || !!state.search || !!state.logKeyword;
+  }
+
+  function describeLogFilters() {
+    var typeLabel = state.logType === "all"
+      ? "全部类型"
+      : (LOG_TYPE_META[state.logType] || { label: state.logType }).label;
+    var parts = ["类型「" + typeLabel + "」", "时间「" + logRangeLabel(state.logRange) + "」"];
+    if (state.search) parts.push("任务「" + state.search + "」");
+    if (state.logKeyword) parts.push("关键词「" + state.logKeyword + "」");
+    return parts.join("　·　");
+  }
+
+  function openCleanupLogsConfirm() {
+    var list = filteredLogs();
+    if (!list.length) {
+      openModal(
+        '<div class="modal-head"><h2>清理日志</h2><button class="icon-btn" data-action="close-modal">×</button></div>' +
+        '<div class="modal-body"><p class="confirm-text">当前列表没有可清理的日志。</p></div>' +
+        '<div class="modal-foot"><button class="btn btn-primary" data-action="close-modal">关闭</button></div>');
+      return;
+    }
+    var warn = logFiltersActive()
+      ? "仅删除当前列表中的日志，其他日志不受影响；清理后无法恢复。"
+      : "当前未设置筛选条件，将删除全部日志，请谨慎操作。";
+    openModal(
+      '<div class="modal-head"><h2>清理日志</h2><button class="icon-btn" data-action="close-modal">×</button></div>' +
+      '<div class="modal-body">' +
+      '<p class="confirm-text">将清理当前列表筛选出的日志 <b>' + list.length + '</b> 条，确定继续吗？</p>' +
+      '<p class="filter-note">当前筛选：' + esc(describeLogFilters()) + '</p>' +
+      '<p class="warn-text">' + warn + '</p>' +
+      '</div>' +
+      '<div class="modal-foot">' +
+      '<button class="btn" data-action="close-modal">取消</button>' +
+      '<button class="btn btn-danger" data-action="confirm-cleanup-logs">确认清理</button>' +
+      '</div>');
+  }
+
+  function confirmCleanupLogs() {
+    var ids = filteredLogs().map(function (log) { return log.id; });
+    if (!ids.length) {
+      closeModal();
+      toast("没有可清理的日志");
+      return;
+    }
+    api("/api/logs/cleanup", "POST", { ids: ids }).then(function (result) {
+      closeModal();
+      toast(result.removed ? ("已清理 " + result.removed + " 条日志") : "没有可清理的日志");
+      return refresh();
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
   function exportData() {
-    var link = document.createElement("a");
-    link.href = "/api/export";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast("已开始导出备份文件");
+    openModal(
+      '<div class="modal-head"><h2>导出数据</h2></div>' +
+      '<div class="modal-body"><div class="export-loading"><span class="spinner"></span>正在导出备份文件…</div></div>');
+    api("/api/export", "POST").then(function (result) {
+      renderExportDone(result);
+    }).catch(function (err) {
+      closeModal();
+      toast(err.message, true);
+    });
+  }
+
+  function renderExportDone(result) {
+    openModal(
+      '<div class="modal-head"><h2>导出完成</h2><button class="icon-btn" data-action="close-modal">×</button></div>' +
+      '<div class="modal-body">' +
+      '<p class="confirm-text">备份文件已保存：</p>' +
+      '<p class="export-path">' + esc(result.file || result.name || "") + '</p>' +
+      '</div>' +
+      '<div class="modal-foot">' +
+      '<button class="btn" data-action="close-modal">关闭弹窗</button>' +
+      '<button class="btn btn-primary" data-action="open-export-dir">打开目录</button>' +
+      '</div>');
+  }
+
+  function openExportDir() {
+    api("/api/export/open", "POST").catch(function (err) { toast(err.message, true); });
   }
 
   function switchView(view) {
@@ -553,10 +696,6 @@
 
   document.addEventListener("click", function (ev) {
     var target = ev.target;
-    if (target && target.classList && target.classList.contains("modal-overlay")) {
-      closeModal();
-      return;
-    }
 
     var tab = target.closest ? target.closest(".tab") : null;
     if (tab) {
@@ -574,6 +713,7 @@
       case "save-new-task": saveNewTask(); break;
       case "manage-statuses": openStatusManager(); break;
       case "export-data": exportData(); break;
+      case "open-export-dir": openExportDir(); break;
       case "open-task": openTaskDetail(id); break;
       case "toggle-column": toggleColumn(el); break;
       case "edit-task": openEditModal(id); break;
@@ -583,6 +723,8 @@
       case "delete-task": openDeleteConfirm(id); break;
       case "archive-instead": archiveTask(id); break;
       case "confirm-delete-task": deleteTask(id); break;
+      case "cleanup-logs": openCleanupLogsConfirm(); break;
+      case "confirm-cleanup-logs": confirmCleanupLogs(); break;
       case "close-modal": closeModal(); break;
       case "add-status": addStatus(); break;
       case "rename-status": renameStatus(el); break;
@@ -593,15 +735,22 @@
   document.addEventListener("change", function (ev) {
     if (ev.target && ev.target.id === "logTypeFilter") {
       state.logType = ev.target.value;
-      render();
+      updateLogsList();
+    }
+    if (ev.target && ev.target.id === "logTimeFilter") {
+      state.logRange = ev.target.value;
+      updateLogsList();
+    }
+  });
+
+  document.addEventListener("input", function (ev) {
+    if (ev.target && ev.target.id === "logKeywordFilter") {
+      state.logKeyword = ev.target.value.trim();
+      updateLogsList();
     }
   });
 
   document.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape") {
-      closeModal();
-      return;
-    }
     if (ev.key === "Enter" && ev.target) {
       if (ev.target.id === "newStatusName") { addStatus(); }
       else if (ev.target.id === "ntTitle") { saveNewTask(); }

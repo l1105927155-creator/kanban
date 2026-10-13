@@ -1,120 +1,89 @@
 # -*- coding: utf-8 -*-
-"""生成任务看板应用图标（app/app.ico），纯标准库实现。
+"""由 PNG 图片生成任务看板应用图标（app/favicon.ico，多分辨率）。
 
-用法：py make_icon.py [输出路径]
+处理流程：
+  1) 按透明通道裁剪到内容边界；
+  2) 整体等比放大到主体纵向占满画布（不改变宽高比），横向溢出的边缘裁掉；
+  3) 用 LANCZOS 逐档下采样，输出 256/128/64/48/32/24/16 共 7 档尺寸的 ICO，
+     保证在桌面、任务栏、窗口、小列表视图等各场景下都清晰。
+
+需要 Pillow（仅此工具脚本需要，应用本体零依赖）：
+    pip install pillow
+
+用法：
+    py make_icon.py [源图路径] [输出路径] [填充比例] [左裁占比]
+    （填充比例默认 0.95；左裁占比默认 0.70，0.5 为对称居中裁剪）
+默认：
+    源图 = 本目录下的 icon-source.png
+    输出 = ../app/favicon.ico
 """
 
 import os
-import struct
 import sys
 
+try:
+    from PIL import Image
+except ImportError:
+    print("此脚本需要 Pillow，请先安装：pip install pillow")
+    sys.exit(1)
 
-def lerp(a, b, t):
-    return a + (b - a) * t
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(TOOLS_DIR)
+DEFAULT_OUT = os.path.join(ROOT_DIR, "app", "favicon.ico")
 
-
-def inside_rounded_rect(x, y, x0, y0, x1, y1, r):
-    if x < x0 or x > x1 or y < y0 or y > y1:
-        return False
-    cx = min(max(x, x0 + r), x1 - r)
-    cy = min(max(y, y0 + r), y1 - r)
-    dx = x - cx
-    dy = y - cy
-    return dx * dx + dy * dy <= r * r
-
-
-def sample(u, v):
-    """u, v ∈ [0,1)，返回像素颜色 (r, g, b, a)。"""
-    # 背景：圆角方形 + 垂直渐变
-    m = 0.04
-    if not inside_rounded_rect(u, v, m, m, 1 - m, 1 - m, 0.18):
-        return (0, 0, 0, 0)
-    top = (0x3D, 0x82, 0xF6)
-    bottom = (0x25, 0x63, 0xEB)
-    t = (v - m) / (1 - 2 * m)
-    t = max(0.0, min(1.0, t))
-    bg = (int(round(lerp(top[0], bottom[0], t))),
-          int(round(lerp(top[1], bottom[1], t))),
-          int(round(lerp(top[2], bottom[2], t))))
-    # 三根白色圆角柱，代表看板列
-    bar_w = 0.16
-    gap = 0.10
-    total = bar_w * 3 + gap * 2
-    x0 = (1 - total) / 2
-    heights = [0.44, 0.58, 0.36]
-    for i, h in enumerate(heights):
-        bx0 = x0 + i * (bar_w + gap)
-        bx1 = bx0 + bar_w
-        by0 = 0.5 - h / 2
-        by1 = by0 + h
-        if inside_rounded_rect(u, v, bx0, by0, bx1, by1, bar_w * 0.45):
-            return (255, 255, 255, 255)
-    return (bg[0], bg[1], bg[2], 255)
+SIZES = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (24, 24), (16, 16)]
+CONTENT_ALPHA_THRESHOLD = 8  # 视为“可见内容”的最小 alpha
+MARGIN_RATIO = 0.01          # 画布放大量（1%，基本贴边）
+CONTENT_FILL = 0.95          # 主体高度占图标高度比例（等比放大，横向溢出部分裁掉）
+CROP_LEFT_SHARE = 0.70       # 横向裁剪偏置：左侧承担 70% 的裁剪量（右侧留出更多空间，修正人物偏右）
 
 
-def render(size):
-    """超采样渲染，返回 size x size 的 RGBA 行列表。"""
-    ss = 4 if size <= 64 else (3 if size <= 128 else 2)
-    n = size * ss
-    rows = []
-    for py in range(size):
-        row = []
-        for px in range(size):
-            r = g = b = a = 0
-            for sy in range(ss):
-                for sx in range(ss):
-                    u = (px * ss + sx + 0.5) / n
-                    v = (py * ss + sy + 0.5) / n
-                    c = sample(u, v)
-                    r += c[0]
-                    g += c[1]
-                    b += c[2]
-                    a += c[3]
-            k = ss * ss
-            row.append((r // k, g // k, b // k, a // k))
-        rows.append(row)
-    return rows
+def build_master(im, fill=None, left_share=None):
+    """裁剪到内容边界，整体等比放大到主体纵向占满画布，横向溢出的边缘裁掉（不变形）。
 
-
-def bmp_blob(size, rows):
-    """生成 ICO 中的 32 位 BMP 图像数据（自下而上 BGRA + AND 掩码）。"""
-    xor = bytearray()
-    for y in range(size - 1, -1, -1):
-        for x in range(size):
-            r, g, b, a = rows[y][x]
-            xor += bytes((b, g, r, a))
-    and_row_bytes = ((size + 31) // 32) * 4
-    and_mask = bytes(and_row_bytes * size)
-    size_image = len(xor) + len(and_mask)
-    header = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0,
-                         size_image, 0, 0, 0, 0)
-    return header + bytes(xor) + and_mask
-
-
-def write_ico(path, sizes):
-    blobs = []
-    for size in sizes:
-        blobs.append((size, bmp_blob(size, render(size))))
-    out = bytearray()
-    out += struct.pack("<HHH", 0, 1, len(blobs))
-    offset = 6 + 16 * len(blobs)
-    for size, blob in blobs:
-        w = 0 if size >= 256 else size
-        h = 0 if size >= 256 else size
-        out += struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32, len(blob), offset)
-        offset += len(blob)
-    for _, blob in blobs:
-        out += blob
-    with open(path, "wb") as f:
-        f.write(out)
+    适用于宽高比 ≥ 1 的图（宽图）：放大后左右两侧会裁掉一部分，主体显得更大；
+    裁剪量偏向左侧（CROP_LEFT_SHARE），人物在图标中的位置更平衡、右侧留白更多。
+    fill / left_share 可在命令行覆盖默认值（见文件头用法）。
+    """
+    fill = CONTENT_FILL if fill is None else fill
+    left_share = CROP_LEFT_SHARE if left_share is None else left_share
+    im = im.convert("RGBA")
+    alpha = im.split()[3]
+    mask = alpha.point(lambda v: 255 if v > CONTENT_ALPHA_THRESHOLD else 0)
+    bbox = mask.getbbox()
+    if not bbox:
+        raise ValueError("源图不包含任何可见内容")
+    content = im.crop(bbox)
+    side = max(content.size)
+    canvas_side = int(round(side * (1 + MARGIN_RATIO * 2)))
+    # 等比放大：主体高度 = 画布高 × fill（宽度按同比例放大后裁掉两侧）
+    k = (canvas_side * fill) / content.height
+    new_h = int(round(content.height * k))
+    new_w = max(canvas_side, int(round(content.width * k)))
+    scaled = content.resize((new_w, new_h), Image.LANCZOS)
+    # 横向裁剪：left_share>0.5 偏向裁掉左侧，=0.5 对称居中
+    cut_l = int(round((new_w - canvas_side) * left_share))
+    scaled = scaled.crop((cut_l, 0, cut_l + canvas_side, new_h))
+    canvas = Image.new("RGBA", (canvas_side, canvas_side), (0, 0, 0, 0))
+    canvas.paste(scaled, (0, (canvas_side - new_h) // 2), scaled)
+    return canvas
 
 
 def main():
-    default_out = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "app.ico")
-    out = sys.argv[1] if len(sys.argv) > 1 else default_out
-    write_ico(out, [16, 32, 48, 64, 256])
+    src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(TOOLS_DIR, "icon-source.png")
+    out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
+    fill = float(sys.argv[3]) if len(sys.argv) > 3 else None
+    left_share = float(sys.argv[4]) if len(sys.argv) > 4 else None
+    if not os.path.isfile(src):
+        print("找不到源图:", src)
+        sys.exit(1)
+    master = build_master(Image.open(src), fill, left_share)
+    master.save(out, format="ICO", sizes=SIZES)
     print("图标已生成:", out)
+    print("尺寸档:", " / ".join(str(s[0]) for s in SIZES))
+    print("源图:", src, "| 母版画布:", "%dx%d" % master.size,
+          "| 填充:", fill if fill is not None else CONTENT_FILL,
+          "| 左裁占比:", left_share if left_share is not None else CROP_LEFT_SHARE)
 
 
 if __name__ == "__main__":
