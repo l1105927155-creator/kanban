@@ -92,8 +92,10 @@
 
   function api(path, method, body) {
     var opts = { method: method || "GET" };
+    if (opts.method !== "GET") opts.headers = { "X-Board-Request": "1" };
     if (body !== undefined) {
-      opts.headers = { "Content-Type": "application/json" };
+      opts.headers = opts.headers || {};
+      opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
     return fetch(path, opts).then(function (res) {
