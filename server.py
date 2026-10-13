@@ -19,11 +19,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(APP_DIR, "app")
-DATA_FILE = os.path.join(APP_DIR, "data.json")
-EXPORT_DIR = os.path.join(APP_DIR, "backup")
-PORT_RANGE = list(range(8737, 8747))
+DATA_DIR = os.environ.get("TASK_BOARD_DATA_DIR", APP_DIR)
+DATA_FILE = os.path.join(DATA_DIR, "data.json")
+EXPORT_DIR = os.path.join(DATA_DIR, "backup")
+PORT_RANGE = [int(os.environ["TASK_BOARD_TEST_PORT"])] if "TASK_BOARD_TEST_PORT" in os.environ else list(range(8737, 8747))
 # 运行中服务的端口会写入该文件，启动器直接读取，无需扫描端口段
-PORT_FILE = os.path.join(APP_DIR, "port.txt")
+PORT_FILE = os.path.join(DATA_DIR, "port.txt")
 
 DEFAULT_STATUSES = ["待处理", "进行中", "等待中", "已完成"]
 
@@ -58,6 +59,7 @@ def default_data():
 
 def save_data(data):
     tmp = DATA_FILE + ".tmp"
+    os.makedirs(DATA_DIR, exist_ok=True)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, DATA_FILE)
@@ -164,6 +166,20 @@ class BoardHandler(BaseHTTPRequestHandler):
 
     # ---------- 基础工具 ----------
 
+    def _allow_mutation(self):
+        # Custom header forces browser CORS preflight and blocks cross-site forms.
+        host = self.headers.get("Host", "").lower()
+        hostname = host.rsplit(":", 1)[0]
+        if hostname not in ("127.0.0.1", "localhost") or self.headers.get("X-Board-Request") != "1":
+            self._send_error_json(403, "请求来源不被允许")
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin.rstrip("/").lower() != "http://" + host:
+            self._send_error_json(403, "请求来源不被允许")
+            return False
+        return True
+
+
     def _send_json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -245,6 +261,8 @@ class BoardHandler(BaseHTTPRequestHandler):
         return self._serve_static(path)
 
     def do_POST(self):
+        if not self._allow_mutation():
+            return
         path = self.path.split("?", 1)[0]
         try:
             body = self._read_body()
@@ -276,6 +294,8 @@ class BoardHandler(BaseHTTPRequestHandler):
         return self._send_error_json(404, "接口不存在")
 
     def do_PATCH(self):
+        if not self._allow_mutation():
+            return
         path = self.path.split("?", 1)[0]
         m = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)", path)
         if m:
@@ -287,6 +307,8 @@ class BoardHandler(BaseHTTPRequestHandler):
         return self._send_error_json(404, "接口不存在")
 
     def do_DELETE(self):
+        if not self._allow_mutation():
+            return
         path = self.path.split("?", 1)[0]
         m = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)", path)
         if m:
@@ -498,7 +520,16 @@ class BoardHandler(BaseHTTPRequestHandler):
             fname = "task-board-backup-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".json"
             fpath = os.path.join(EXPORT_DIR, fname)
             body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-            with open(fpath, "wb") as f:
+            base, ext = os.path.splitext(fpath)
+            counter = 1
+            while True:
+                try:
+                    f = open(fpath, "xb")
+                    break
+                except FileExistsError:
+                    fpath = "%s-%d%s" % (base, counter, ext)
+                    counter += 1
+            with f:
                 f.write(body)
         return self._send_json({
             "ok": True,
@@ -572,6 +603,7 @@ def write_port_file(port):
     """把当前端口写入文件（原子替换，避免读到写了一半的内容）。"""
     tmp = PORT_FILE + ".tmp"
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(port))
         os.replace(tmp, PORT_FILE)
