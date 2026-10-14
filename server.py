@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""个人开发任务看板 - 本地服务端
+"""个人任务看板 - 本地服务端
 
 仅使用 Python 标准库，无需安装第三方依赖。
 职责：提供本地 HTTP 接口（任务 / 状态 / 日志的增删改查）与静态页面，
@@ -668,7 +668,7 @@ def main():
     if httpd is None:
         print("无法绑定端口 %d-%d，任务看板启动失败。" % (PORT_RANGE[0], PORT_RANGE[-1]))
         sys.exit(1)
-    print("个人开发任务看板服务已启动：http://127.0.0.1:%d/" % bound_port)
+    print("个人任务看板服务已启动：http://127.0.0.1:%d/" % bound_port)
     write_port_file(bound_port)
     try:
         httpd.serve_forever()
