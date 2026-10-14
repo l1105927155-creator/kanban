@@ -655,11 +655,36 @@
 
   function exportData() {
     openModal(
-      '<div class="modal-head"><h2>导出数据</h2></div>' +
-      '<div class="modal-body"><div class="export-loading"><span class="spinner"></span>正在导出备份文件…</div></div>');
-    api("/api/export", "POST").then(function (result) {
-      renderExportDone(result);
-    }).catch(function (err) {
+      '<div class="modal-head"><h2>导出数据</h2><button class="icon-btn" data-action="close-modal">×</button></div>' +
+      '<div class="modal-body"><p class="confirm-text">请选择导出范围</p>' +
+      '<p class="filter-note">当前页面：' + esc(state.view === "board" ? "看板" : state.view === "archive" ? "归档箱" : "日志") + '</p></div>' +
+      '<div class="modal-foot"><button class="btn" data-action="export-all">导出所有</button>' +
+      '<button class="btn btn-primary" data-action="export-filtered">导出当前筛选结果</button></div>');
+  }
+
+  function runExport(mode) {
+    var body = { mode: mode };
+    if (mode === "filtered") {
+      if (state.view === "logs") {
+        var selectedLogs = filteredLogs();
+        body.logIds = selectedLogs.map(function (log) { return log.id; });
+        var linkedIds = {};
+        selectedLogs.forEach(function (log) { linkedIds[log.taskId] = true; });
+        body.taskIds = state.tasks.filter(function (task) { return linkedIds[task.id]; })
+          .map(function (task) { return task.id; });
+      } else {
+        body.taskIds = state.tasks.filter(function (task) {
+          return !!task.archived === (state.view === "archive") && matchSearch(task);
+        }).map(function (task) { return task.id; });
+        var selectedIds = {};
+        body.taskIds.forEach(function (id) { selectedIds[id] = true; });
+        body.logIds = state.logs.filter(function (log) { return selectedIds[log.taskId]; })
+          .map(function (log) { return log.id; });
+      }
+    }
+    openModal('<div class="modal-head"><h2>导出数据</h2></div>' +
+      '<div class="modal-body"><div class="export-loading"><span class="spinner"></span>正在导出文件…</div></div>');
+    api("/api/export", "POST", body).then(renderExportDone).catch(function (err) {
       closeModal();
       toast(err.message, true);
     });
@@ -721,6 +746,8 @@
       case "save-new-task": saveNewTask(); break;
       case "manage-statuses": openStatusManager(); break;
       case "export-data": exportData(); break;
+      case "export-all": runExport("all"); break;
+      case "export-filtered": runExport("filtered"); break;
       case "open-export-dir": openExportDir(); break;
       case "open-task": openTaskDetail(id); break;
       case "toggle-column": toggleColumn(el); break;
