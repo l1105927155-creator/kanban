@@ -8,6 +8,33 @@
 - **数据导出**：备份为 JSON 文件，保存在本地 `backup/` 目录。
 - **Agent 集成**：内置 stdio MCP 适配层，支持任务查询、创建、编辑、状态更新与进展记录。
 
+## 技术栈与架构
+
+| 组件 | 技术 | 职责 |
+| --- | --- | --- |
+| Web 前端 | HTML、CSS、原生 JavaScript | 页面展示、交互与 HTTP API 调用；无需前端框架或构建步骤 |
+| 后端 | Python 标准库 `ThreadingHTTPServer` | 本机 HTTP API、任务及日志业务逻辑 |
+| 数据层 | 本地 `data.json` | 任务、状态和操作历史的持久化 |
+| MCP 适配层 | Python、MCP SDK、stdio | 向 Codex 等 Agent 提供任务工具，并复用后端 HTTP API |
+| Windows 启动器 | VBScript | 启动/复用后端，以 Chrome 或 Edge 的应用窗口模式打开页面 |
+
+```text
+浏览器（普通网页 / --app 独立窗口）      Codex 等 Agent
+             │                              │
+             │ HTTP                         │ stdio
+             │                              ▼
+             │                         MCP Server
+             │                              │ HTTP
+             └──────────────┬───────────────┘
+                            ▼
+                  Python HTTP Server
+                            │
+                            ▼
+                        data.json
+```
+
+前端**不是无头浏览器**：`--app` 仅隐藏常规浏览器的地址栏和标签页，页面仍然可见。MCP 也不直接访问 `data.json`，所有读写经由看板后端完成。
+
 ## 快速开始
 
 面向 Windows 本地使用，要求安装 Python（看板本身只依赖 Python 标准库）。
