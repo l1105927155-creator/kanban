@@ -213,6 +213,17 @@ def main():
             saved_ok = False
     check("导出数据", status == 200 and data.get("ok") is True and saved_ok, data)
 
+    # 16b. Agent 工作进展以独立事件写入，不覆盖备注
+    status, result = req("POST", "/api/tasks/%s/progress" % task_id,
+                         {"text": "MCP 自检进展"})
+    check("追加任务进展", status == 200 and result.get("log", {}).get("type") == "progress",
+          (status, result))
+    status, result = req("GET", "/api/logs")
+    check("进展可在日志中查询",
+          any(l.get("type") == "progress" and l.get("taskId") == task_id
+              and l.get("snapshot", {}).get("text") == "MCP 自检进展"
+              for l in result.get("logs", [])))
+
     # 17. 收尾：删除自检任务 A（此删除也会产生一条 delete 日志）
     req("DELETE", "/api/tasks/%s" % task_id)
 
@@ -220,7 +231,7 @@ def main():
     status, data = req("GET", "/api/logs")
     junk_ids = [l["id"] for l in data.get("logs", []) if l.get("taskId") in (task_id, task_b)]
     base_count = len(data.get("logs", []))
-    check("收集到自检日志（任务A 5 条 + 任务B 2 条）", len(junk_ids) == 7, junk_ids)
+    check("收集到自检日志（任务A 6 条 + 任务B 2 条）", len(junk_ids) == 8, junk_ids)
     status, res = req("POST", "/api/logs/cleanup", {"ids": junk_ids})
     check("清理接口：按 id 删除自检日志",
           status == 200 and res.get("removed") == len(junk_ids), (status, res, len(junk_ids)))
