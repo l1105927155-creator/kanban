@@ -274,6 +274,9 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._export_data()
         if path == "/api/export/open":
             return self._open_export_dir()
+        m = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/progress", path)
+        if m:
+            return self._add_progress(m.group(1), body)
         m = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/view", path)
         if m:
             return self._view_task(m.group(1))
@@ -345,6 +348,19 @@ class BoardHandler(BaseHTTPRequestHandler):
                     snapshot={"title": title, "goal": goal, "note": note, "status": status})
             save_data(data)
         return self._send_json({"task": task})
+
+    def _add_progress(self, task_id, body):
+        message = self._clean_multiline(body.get("text"))
+        if not message:
+            return self._send_error_json(400, "进展内容不能为空")
+        with _lock:
+            data = load_data()
+            task = find_task(data, task_id)
+            if task is None:
+                return self._send_error_json(404, "任务不存在")
+            entry = add_log(data, "progress", task, snapshot={"text": message})
+            save_data(data)
+        return self._send_json({"log": entry})
 
     def _view_task(self, task_id):
         with _lock:
