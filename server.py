@@ -102,6 +102,17 @@ def find_task(data, task_id):
     return None
 
 
+def unique_task_title(data, title, exclude_id=None):
+    """在全部任务（包含归档）中选择未占用标题。修改时忽略自身。"""
+    used = {t.get("title") for t in data["tasks"] if t.get("id") != exclude_id}
+    if title not in used:
+        return title
+    number = 1
+    while f"{title} ({number})" in used:
+        number += 1
+    return f"{title} ({number})"
+
+
 def add_log(data, log_type, task, changes=None, snapshot=None):
     """追加一条操作日志。taskTitle 记录操作时的标题快照，taskId 保证改名后仍可关联。"""
     entry = {
@@ -331,6 +342,7 @@ class BoardHandler(BaseHTTPRequestHandler):
             data = load_data()
             if status not in data["statuses"]:
                 status = data["statuses"][0]
+            title = unique_task_title(data, title)
             ts = now_iso()
             task = {
                 "id": gen_id("task-"),
@@ -385,6 +397,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                 if not title:
                     return self._send_error_json(400, "标题不能为空")
                 if title != task.get("title"):
+                    title = unique_task_title(data, title, exclude_id=task_id)
                     changes.append({"field": "title", "from": task.get("title", ""), "to": title})
                     task["title"] = title
             if "goal" in body:
