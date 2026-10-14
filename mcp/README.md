@@ -1,6 +1,6 @@
-# Kanban MCP（Codex 接入）
+# Kanban MCP（Codex / DSH 接入）
 
-MCP 通过 stdio 接入 Codex，调用看板现有的本地 HTTP API。它会查找运行中的本地看板，必要时自动启动 `server.py`，不直接写入 `data.json`。
+MCP 通过 stdio 接入 Codex 与 DSH，调用看板现有的本地 HTTP API。它会查找运行中的本地看板，必要时自动启动 `server.py`，不直接写入 `data.json`。
 
 ## 安装
 
@@ -26,6 +26,49 @@ args = ["C:\\Path\\To\\kanban\\mcp\\server.py"]
 
 例如告诉 Codex：**“请通过 kanban 工具查找任务‘登录鉴权’，阅读目标、备注及日志，开始跟进。未通过验收不要标记已完成。”**
 
+## DSH 配置
+
+DSH 内置 MCP 连接器 `@deepseek-ai/dsh-mcp-client`，无需额外安装即可接入 stdio MCP；安装 `dsh-mcp-connector` 面板插件后可在侧边栏「MCP连接器」中用图形界面管理连接。
+
+### 方式一：面板插件（推荐）
+
+```powershell
+dsh plugin --profile desktop add dsh-mcp-connector
+```
+
+安装后**完全重启** DeepSeek Harness Desktop，侧边栏出现「MCP连接器」。在其中新建 stdio 连接，把下列路径替换为实际绝对路径：
+
+- 名称：`kanban`
+- 命令：`C:\Path\To\Python311\python.exe`
+- 参数：`C:\Path\To\kanban\mcp\server.py`
+- 工作目录：`C:\Path\To\kanban`
+- 环境变量：`TEMP` 与 `TMP` 均设为 `C:\Path\To\Temp`
+
+面板会把该连接转换为运行时的 `@deepseek-ai/dsh-mcp-client` 条目，工具名形如 `mcp__kanban__list_tasks`。
+
+### 方式二：直接写 Cordis 补丁
+
+在 profile 的 `cordis.patch.yml`（Windows 通常为 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml`）中新增一行。新条目必须用 `insert:`，直接写 `- id:` 不会匹配到已有行，会被跳过：
+
+```yaml
+- insert:
+    - id: mcp-kanban
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: kanban
+        transport: stdio
+        command: 'C:\Path\To\Python311\python.exe'
+        args: ['C:\Path\To\kanban\mcp\server.py']
+        cwd: 'C:\Path\To\kanban'
+        env:
+          TEMP: 'C:\Path\To\Temp'
+          TMP: 'C:\Path\To\Temp'
+```
+
+`serverName` 决定工具名前缀（`mcp__<serverName>__<工具名>`），只允许 `[A-Za-z0-9_-]`，长度 1–32。
+
+两种方式都要求启动 MCP 的解释器中已安装 `mcp`（见「安装」一节）。可以运行 `py -3.11 -c "import sys; print(sys.executable)"` 获得解释器路径。
+
 ## 工具
 
 - `list_tasks(keyword, status, include_archived)`：查询和筛选任务。
@@ -44,7 +87,7 @@ args = ["C:\\Path\\To\\kanban\\mcp\\server.py"]
 - 关键结论发生变化、发现需要用户处理的阻塞、验收未通过时，应明确记录；不为凑日志而记录每一个操作步骤。
 - 仅约束 Agent 的记录方式，不裁剪用户主动填写的内容，也不改写历史数据。
 
-工具不会主动监控任务或在后台执行编码工作；需要由 Codex 会话发起调用。
+工具不会主动监控任务或在后台执行编码工作；需要由 Codex 或 DSH 会话发起调用。
 
 ## 使用边界
 
