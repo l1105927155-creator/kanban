@@ -282,7 +282,7 @@ class BoardHandler(BaseHTTPRequestHandler):
         if path == "/api/tasks":
             return self._create_task(body)
         if path == "/api/export":
-            return self._export_data()
+            return self._export_data(body)
         if path == "/api/export/open":
             return self._open_export_dir()
         m = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/progress", path)
@@ -534,19 +534,32 @@ class BoardHandler(BaseHTTPRequestHandler):
 
     # ---------- 导出 ----------
 
-    def _export_data(self):
+    def _export_data(self, request):
         """将全量数据保存到 backup 目录，返回保存信息（供界面展示路径与打开目录）。"""
+        mode = request.get("mode", "all")
+        if mode not in ("all", "filtered"):
+            return self._send_error_json(400, "无效的导出范围")
+        if mode == "filtered":
+            task_ids, log_ids = request.get("taskIds"), request.get("logIds")
+            if (not isinstance(task_ids, list) or not isinstance(log_ids, list)
+                    or any(not isinstance(i, str) for i in task_ids + log_ids)):
+                return self._send_error_json(400, "筛选导出需要任务及日志 ID 列表")
         with _lock:
             data = load_data()
+            tasks, logs = data["tasks"], data["logs"]
+            if mode == "filtered":
+                task_ids, log_ids = set(task_ids), set(log_ids)
+                tasks = [t for t in tasks if t.get("id") in task_ids]
+                logs = [l for l in logs if l.get("id") in log_ids]
             payload = {
                 "exportedAt": now_iso(),
                 "version": data.get("version", 1),
                 "statuses": data["statuses"],
-                "tasks": data["tasks"],
-                "logs": data["logs"],
+                "tasks": tasks,
+                "logs": logs,
             }
             os.makedirs(EXPORT_DIR, exist_ok=True)
-            fname = "task-board-backup-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".json"
+            fname = "task-board-" + ("backup" if mode == "all" else "filtered") + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".json"
             fpath = os.path.join(EXPORT_DIR, fname)
             body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             base, ext = os.path.splitext(fpath)
