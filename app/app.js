@@ -1,4 +1,4 @@
-/* 个人开发任务看板 - 前端逻辑（原生 JS，无框架） */
+/* 个人任务看板 - 前端逻辑（原生 JS，无框架） */
 (function () {
   "use strict";
 
@@ -185,7 +185,7 @@
     }).join("");
     var total = state.tasks.filter(function (t) { return !t.archived; }).length;
     var banner = total === 0
-      ? '<div class="board-banner">还没有任务，点击右上角「＋ 新建任务」开始记录你的第一个开发任务。</div>'
+      ? '<div class="board-banner">还没有任务，点击右上角「＋ 新建任务」开始记录你的第一个任务。</div>'
       : "";
     return banner + '<div class="board">' + columns + '</div>';
   }
