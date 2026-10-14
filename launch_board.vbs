@@ -1,7 +1,7 @@
 Option Explicit
-' ä¸ªäººä»»åŠ¡çœ‹æ¿ - å¯åŠ¨å™¨
-' é€»è¾‘ï¼šæœåŠ¡å¯åŠ¨æ—¶ä¼šæŠŠç«¯å£å†™å…¥ port.txtï¼›å¯åŠ¨å™¨ç›´æ¥è¯»å–è¯¥æ–‡ä»¶ï¼Œæ— éœ€æ‰«æç«¯å£æ®µã€‚
-'       æœªè¿è¡Œåˆ™ç”¨ pyw æ— çª—å£å¯åŠ¨ server.pyï¼Œç­‰ç«¯å£æ–‡ä»¶å‡ºç°ä¸”å¯ç”¨åæ‰“å¼€åº”ç”¨çª—å£ã€‚
+' ¸öÈËÈÎÎñ¿´°å - Æô¶¯Æ÷
+' Âß¼­£º·şÎñÆô¶¯Ê±»á°Ñ¶Ë¿ÚĞ´Èë port.txt£»Æô¶¯Æ÷Ö±½Ó¶ÁÈ¡¸ÃÎÄ¼ş£¬ÎŞĞèÉ¨Ãè¶Ë¿Ú¶Î¡£
+'       Î´ÔËĞĞÔòÓÃ pyw ÎŞ´°¿ÚÆô¶¯ server.py£¬µÈ¶Ë¿ÚÎÄ¼ş³öÏÖÇÒ¿ÉÓÃºó´ò¿ªÓ¦ÓÃ´°¿Ú¡£
 
 Dim fso, sh, appDir, portFile, baseUrl
 
@@ -16,11 +16,11 @@ If baseUrl = "" Then
   Dim serverPath, launched, n
   serverPath = fso.BuildPath(appDir, "server.py")
   If Not fso.FileExists(serverPath) Then
-    MsgBox "æœªæ‰¾åˆ° server.pyï¼Œè¯·ç¡®è®¤ä»»åŠ¡çœ‹æ¿æ–‡ä»¶å®Œæ•´ã€‚", 16, "ä¸ªäººä»»åŠ¡çœ‹æ¿"
+    MsgBox "Î´ÕÒµ½ server.py£¬ÇëÈ·ÈÏÈÎÎñ¿´°åÎÄ¼şÍêÕû¡£", 16, "¸öÈËÈÎÎñ¿´°å"
     WScript.Quit 1
   End If
 
-  ' ä¼˜å…ˆ pywï¼ˆæ— æ§åˆ¶å°çª—å£ï¼‰ï¼Œå¤±è´¥åˆ™å°è¯• pythonw
+  ' ÓÅÏÈ pyw£¨ÎŞ¿ØÖÆÌ¨´°¿Ú£©£¬Ê§°ÜÔò³¢ÊÔ pythonw
   On Error Resume Next
   sh.Run "pyw.exe """ & serverPath & """", 0, False
   launched = (Err.Number = 0)
@@ -32,7 +32,7 @@ If baseUrl = "" Then
   End If
   On Error GoTo 0
 
-  ' æœ€å¤šç­‰å¾…çº¦ 18 ç§’
+  ' ×î¶àµÈ´ıÔ¼ 18 Ãë
   For n = 1 To 60
     WScript.Sleep 300
     baseUrl = ReadRunning(portFile)
@@ -41,17 +41,17 @@ If baseUrl = "" Then
 End If
 
 If baseUrl = "" Then
-  MsgBox "ä»»åŠ¡çœ‹æ¿å¯åŠ¨å¤±è´¥ï¼šæœªèƒ½å¯åŠ¨æœ¬åœ°æœåŠ¡ã€‚" & vbCrLf & vbCrLf & _
-         "è¯·ç¡®è®¤å·²å®‰è£… Pythonï¼ˆå‘½ä»¤è¡Œæ‰§è¡Œ py --version æœ‰è¾“å‡ºï¼‰ã€‚" & vbCrLf & _
-         "ä¹Ÿå¯ä»¥åœ¨å‘½ä»¤è¡Œè¿›å…¥æœ¬æ–‡ä»¶å¤¹è¿è¡Œ server.py æŸ¥çœ‹å…·ä½“é”™è¯¯ã€‚", 16, "ä¸ªäººä»»åŠ¡çœ‹æ¿"
+  MsgBox "ÈÎÎñ¿´°åÆô¶¯Ê§°Ü£ºÎ´ÄÜÆô¶¯±¾µØ·şÎñ¡£" & vbCrLf & vbCrLf & _
+         "ÇëÈ·ÈÏÒÑ°²×° Python£¨ÃüÁîĞĞÖ´ĞĞ py --version ÓĞÊä³ö£©¡£" & vbCrLf & _
+         "Ò²¿ÉÒÔÔÚÃüÁîĞĞ½øÈë±¾ÎÄ¼ş¼ĞÔËĞĞ server.py ²é¿´¾ßÌå´íÎó¡£", 16, "¸öÈËÈÎÎñ¿´°å"
   WScript.Quit 1
 End If
 
 OpenApp baseUrl
 
-' ---------- å‡½æ•° ----------
+' ---------- º¯Êı ----------
 
-' è¯»å– port.txt å¹¶ç¡®è®¤è¯¥ç«¯å£çš„çœ‹æ¿å¯ç”¨ï¼›ä¸å¯ç”¨åˆ™è¿”å›ç©ºä¸²
+' ¶ÁÈ¡ port.txt ²¢È·ÈÏ¸Ã¶Ë¿ÚµÄ¿´°å¿ÉÓÃ£»²»¿ÉÓÃÔò·µ»Ø¿Õ´®
 Function ReadRunning(path)
   Dim f, txt, url
   ReadRunning = ""
@@ -73,8 +73,8 @@ Function IsBoardUp(base)
   Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
   If Err.Number = 0 Then
     http.setTimeouts 200, 200, 800, 800
-    ' å…ˆæŸ¥æ¥å£ç¡®è®¤æ˜¯çœ‹æ¿æœåŠ¡ï¼Œå†æŸ¥æ ¹è·¯å¾„ç¡®è®¤é¡µé¢çœŸçš„å‘å¾—å‡ºæ¥ã€‚
-    ' åªçœ‹ /api/health ä¼šæŠŠ"åŠæ­»"å®ä¾‹è¯¯åˆ¤ä¸ºå·²å°±ç»ªï¼ˆç½‘é¡µæ— æ³•æ­£å¸¸è¿ä½œï¼‰ã€‚
+    ' ÏÈ²é½Ó¿ÚÈ·ÈÏÊÇ¿´°å·şÎñ£¬ÔÙ²é¸ùÂ·¾¶È·ÈÏÒ³ÃæÕæµÄ·¢µÃ³öÀ´¡£
+    ' Ö»¿´ /api/health »á°Ñ"°ëËÀ"ÊµÀıÎóÅĞÎªÒÑ¾ÍĞ÷£¨ÍøÒ³ÎŞ·¨Õı³£ÔË×÷£©¡£
     http.open "GET", base & "/api/health", False
     http.send
     If Err.Number = 0 Then
