@@ -99,6 +99,11 @@ def main():
     status, data = req("GET", "/api/health")
     check("健康检查 /api/health", status == 200 and data.get("app") == "task-board", data)
 
+    # 1b. 修订标记接口（供前端轮询判断是否需要刷新）可用
+    status, rev_data = req("GET", "/api/rev")
+    rev_before = rev_data.get("rev")
+    check("修订标记 /api/rev 可用", status == 200 and bool(rev_before), (status, rev_data))
+
     # 2. 初始状态包含预置状态
     status, data = req("GET", "/api/state")
     check("预置状态存在", "待处理" in data.get("statuses", []), data.get("statuses"))
@@ -108,6 +113,11 @@ def main():
         "title": title_a, "goal": "验证新增流程", "note": "自检脚本创建", "status": "待处理"})
     check("新增任务", status == 200 and data.get("task", {}).get("id"), data)
     task_id = data.get("task", {}).get("id")
+
+    # 3b. 写入后修订标记必须变化（否则前端轮询会漏掉更新）
+    status, rev_data = req("GET", "/api/rev")
+    check("写入后修订标记变化", rev_data.get("rev") != rev_before,
+          (rev_before, rev_data.get("rev")))
 
     # 4. 新增后能查到
     task = get_task(task_id) if task_id else None

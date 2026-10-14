@@ -95,6 +95,20 @@ def load_data():
     return data
 
 
+def data_rev():
+    """数据文件的修订标记（修改时间 + 文件大小）。
+
+    用作前端轮询的“是否有变化”判据：任何写入都会经 save_data() 原子替换
+    data.json，从而改变该标记；组合 mtime_ns 与 size 既能覆盖普通写入，
+    也能覆盖手工替换 / 恢复 data.json 的情形。
+    """
+    try:
+        st = os.stat(DATA_FILE)
+    except OSError:
+        return "0-0"
+    return "%d-%d" % (st.st_mtime_ns, st.st_size)
+
+
 def find_task(data, task_id):
     for t in data["tasks"]:
         if t.get("id") == task_id:
@@ -269,6 +283,11 @@ class BoardHandler(BaseHTTPRequestHandler):
             with _lock:
                 data = load_data()
             return self._send_json({"logs": list(reversed(data["logs"]))})
+        if path == "/api/rev":
+            # 轻量接口：只返回修订标记，供前端轮询判断是否需要重新拉取数据
+            with _lock:
+                rev = data_rev()
+            return self._send_json({"rev": rev})
         return self._serve_static(path)
 
     def do_POST(self):

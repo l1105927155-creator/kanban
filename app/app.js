@@ -14,6 +14,11 @@
     expandedCols: {} // 单列模式下已展开的栏目（按状态名）
   };
 
+  // 自动更新：定时轮询服务端的修订标记，仅在有变化时才重新拉取并渲染
+  var POLL_INTERVAL = 3000; // 轮询间隔（毫秒）
+  var lastRev = null;       // 最近一次已知的数据修订标记
+  var pollBusy = false;     // 轮询请求进行中标志，避免请求重叠
+
   var STATUS_COLORS = ["#667085", "#2f6fed", "#d97706", "#16a34a", "#7c3aed", "#db2777", "#0891b2", "#ca8a04"];
   var LOG_TYPE_META = {
     create: { label: "新增", cls: "t-create" },
@@ -109,15 +114,48 @@
     });
   }
 
+  function loadServerData() {
+    return Promise.all([api("/api/state"), api("/api/logs"), api("/api/rev")]);
+  }
+
+  function applyServerData(results) {
+    state.statuses = results[0].statuses || [];
+    state.tasks = results[0].tasks || [];
+    state.logs = results[1].logs || [];
+    if (results[2] && results[2].rev != null) lastRev = results[2].rev;
+  }
+
   function refresh() {
-    return Promise.all([api("/api/state"), api("/api/logs")]).then(function (results) {
-      state.statuses = results[0].statuses || [];
-      state.tasks = results[0].tasks || [];
-      state.logs = results[1].logs || [];
+    return loadServerData().then(function (results) {
+      applyServerData(results);
       render();
     }).catch(function (err) {
       toast(err.message, true);
     });
+  }
+
+  function syncFromServer() {
+    // 轮询触发的静默同步：失败不打扰用户；日志页只刷新列表，避免打断筛选输入
+    return loadServerData().then(function (results) {
+      applyServerData(results);
+      if (state.view === "logs" && document.getElementById("logsList")) {
+        renderTabs();
+        updateLogsList();
+      } else {
+        render();
+      }
+    }).catch(function () { /* 服务暂时不可用，等待下次轮询重试 */ });
+  }
+
+  function pollTick() {
+    if (document.hidden || pollBusy) return;
+    pollBusy = true;
+    api("/api/rev").then(function (result) {
+      if (result && result.rev != null && result.rev !== lastRev) {
+        return syncFromServer();
+      }
+    }).catch(function () { /* 静默忽略，下次轮询重试 */ })
+      .then(function () { pollBusy = false; });
   }
 
   // ---------- Toast ----------
@@ -805,6 +843,11 @@
       render();
     });
     refresh();
+    setInterval(pollTick, POLL_INTERVAL);
+    // 页面重新可见时立即检查一次，避免后台挂起期间的更新被延迟到下一个周期
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) pollTick();
+    });
   }
 
   document.addEventListener("DOMContentLoaded", init);
