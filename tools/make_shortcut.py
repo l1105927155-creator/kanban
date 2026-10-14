@@ -58,7 +58,7 @@ def main():
     sc.Arguments = '"%s"' % LAUNCHER
     sc.WorkingDirectory = ROOT
     sc.IconLocation = ICON + ",0"
-    sc.Description = "个人开发任务看板 - 双击打开"
+    sc.Description = "个人任务看板 - 双击打开"
     sc.Save()
 
     check = ws.CreateShortcut(LNK)
