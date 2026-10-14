@@ -8,7 +8,7 @@
     logs: [],
     view: "board",   // board | archive | logs
     search: "",
-    logType: "all",
+    logTypes: [],       // 日志类型多选：已选中的类型键，默认全选（见 ALL_LOG_TYPES）
     logRange: "all",    // 日志时间范围：all | today | 7d | 30d
     logKeyword: "",     // 日志变更内容关键词
     expandedCols: {} // 单列模式下已展开的栏目（按状态名）
@@ -30,6 +30,9 @@
     delete: { label: "删除", cls: "t-delete" }
   };
   var FIELD_LABEL = { title: "标题", goal: "目标", note: "备注", status: "状态" };
+  // 日志类型全集（顺序即下拉中的展示顺序），"全部类型" 作为第一项表示全选
+  var ALL_LOG_TYPES = Object.keys(LOG_TYPE_META);
+  state.logTypes = ALL_LOG_TYPES.slice();
   var LOG_RANGES = [
     ["all", "全部时间"],
     ["today", "今天"],
@@ -292,7 +295,7 @@
   function filteredLogs() {
     var kw = state.logKeyword.toLowerCase();
     return state.logs.filter(function (log) {
-      if (state.logType !== "all" && log.type !== state.logType) return false;
+      if (state.logTypes.indexOf(log.type) < 0) return false;
       if (!matchLogRange(log)) return false;
       if (state.search) {
         var t = taskById(log.taskId);
@@ -319,20 +322,96 @@
     return list.map(logItemHtml).join("");
   }
 
-  function renderLogs() {
-    var typeOptions = [["all", "全部类型"]].concat(Object.keys(LOG_TYPE_META).map(function (k) {
-      return [k, LOG_TYPE_META[k].label];
-    })).map(function (pair) {
-      return '<option value="' + pair[0] + '"' + (state.logType === pair[0] ? " selected" : "") + '>' +
-        pair[1] + '</option>';
+  // ---------- 日志类型多选下拉 ----------
+
+  function allLogTypesSelected() {
+    return state.logTypes.length === ALL_LOG_TYPES.length;
+  }
+
+  function logTypeSummary() {
+    if (allLogTypesSelected()) return "全部类型";
+    if (!state.logTypes.length) return "未选择类型";
+    return ALL_LOG_TYPES.filter(function (k) {
+      return state.logTypes.indexOf(k) >= 0;
+    }).map(function (k) {
+      return LOG_TYPE_META[k].label;
+    }).join("、");
+  }
+
+  function logTypeMenuHtml() {
+    var items = [{ value: "", label: "全部类型", all: true }].concat(ALL_LOG_TYPES.map(function (k) {
+      return { value: k, label: LOG_TYPE_META[k].label, all: false };
+    }));
+    return items.map(function (item) {
+      var checked = item.all ? allLogTypesSelected() : state.logTypes.indexOf(item.value) >= 0;
+      var attr = item.all ? ' data-logtype-all="1"' : ' data-logtype="' + esc(item.value) + '"';
+      return '<label class="dropdown-item"><input type="checkbox"' + attr + (checked ? " checked" : "") +
+        '><span>' + esc(item.label) + '</span></label>';
     }).join("");
+  }
+
+  function logTypeToggleHtml() {
+    return '<div class="dropdown" id="logTypeDropdown">' +
+      '<button type="button" class="dropdown-toggle" id="logTypeToggle" data-action="toggle-log-types" aria-expanded="false">' +
+      '类型：<span id="logTypeLabel">' + esc(logTypeSummary()) + '</span><span class="caret">▾</span></button>' +
+      '<div class="dropdown-menu" id="logTypeMenu" hidden>' + logTypeMenuHtml() + '</div>' +
+      '</div>';
+  }
+
+  function setLogTypeMenu(open) {
+    var menu = document.getElementById("logTypeMenu");
+    var toggle = document.getElementById("logTypeToggle");
+    if (!menu || !toggle) return;
+    if (open) menu.removeAttribute("hidden"); else menu.setAttribute("hidden", "");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function closeLogTypeMenu() {
+    setLogTypeMenu(false);
+  }
+
+  function toggleLogTypeMenu() {
+    var menu = document.getElementById("logTypeMenu");
+    if (menu) setLogTypeMenu(menu.hasAttribute("hidden"));
+  }
+
+  function syncLogTypeControl() {
+    // 就地更新勾选状态与按钮文案，避免重建工具栏导致下拉被收起
+    var menu = document.getElementById("logTypeMenu");
+    if (menu) {
+      var boxes = menu.querySelectorAll('input[type="checkbox"]');
+      for (var i = 0; i < boxes.length; i++) {
+        var box = boxes[i];
+        if (box.hasAttribute("data-logtype-all")) box.checked = allLogTypesSelected();
+        else box.checked = state.logTypes.indexOf(box.getAttribute("data-logtype")) >= 0;
+      }
+    }
+    var label = document.getElementById("logTypeLabel");
+    if (label) label.textContent = logTypeSummary();
+  }
+
+  function applyLogTypeChange(box) {
+    // 「全部类型」：勾选即全选，取消即清空；单个类型按勾选增删
+    if (box.hasAttribute("data-logtype-all")) {
+      state.logTypes = box.checked ? ALL_LOG_TYPES.slice() : [];
+    } else {
+      var type = box.getAttribute("data-logtype");
+      var idx = state.logTypes.indexOf(type);
+      if (box.checked && idx < 0) state.logTypes.push(type);
+      else if (!box.checked && idx >= 0) state.logTypes.splice(idx, 1);
+    }
+    syncLogTypeControl();
+    updateLogsList();
+  }
+
+  function renderLogs() {
     var rangeOptions = LOG_RANGES.map(function (pair) {
       return '<option value="' + pair[0] + '"' + (state.logRange === pair[0] ? " selected" : "") + '>' +
         pair[1] + '</option>';
     }).join("");
     var list = filteredLogs();
     var toolbar = '<div class="logs-toolbar">' +
-      '<label>类型：<select id="logTypeFilter">' + typeOptions + '</select></label>' +
+      logTypeToggleHtml() +
       '<label>时间：<select id="logTimeFilter">' + rangeOptions + '</select></label>' +
       '<input id="logKeywordFilter" type="text" placeholder="搜索变更内容…" value="' + esc(state.logKeyword) + '" autocomplete="off">' +
       '<span class="logs-count" id="logsCount">共 ' + list.length + ' 条</span>' +
@@ -639,14 +718,11 @@
   }
 
   function logFiltersActive() {
-    return state.logType !== "all" || state.logRange !== "all" || !!state.search || !!state.logKeyword;
+    return !allLogTypesSelected() || state.logRange !== "all" || !!state.search || !!state.logKeyword;
   }
 
   function describeLogFilters() {
-    var typeLabel = state.logType === "all"
-      ? "全部类型"
-      : (LOG_TYPE_META[state.logType] || { label: state.logType }).label;
-    var parts = ["类型「" + typeLabel + "」", "时间「" + logRangeLabel(state.logRange) + "」"];
+    var parts = ["类型「" + logTypeSummary() + "」", "时间「" + logRangeLabel(state.logRange) + "」"];
     if (state.search) parts.push("任务「" + state.search + "」");
     if (state.logKeyword) parts.push("关键词「" + state.logKeyword + "」");
     return parts.join("　·　");
@@ -768,6 +844,10 @@
   document.addEventListener("click", function (ev) {
     var target = ev.target;
 
+    // 点击类型下拉以外的区域时收起下拉
+    var typeDropdown = document.getElementById("logTypeDropdown");
+    if (typeDropdown && target && !typeDropdown.contains(target)) closeLogTypeMenu();
+
     var tab = target.closest ? target.closest(".tab") : null;
     if (tab) {
       switchView(tab.getAttribute("data-view"));
@@ -798,6 +878,7 @@
       case "confirm-delete-task": deleteTask(id); break;
       case "cleanup-logs": openCleanupLogsConfirm(); break;
       case "confirm-cleanup-logs": confirmCleanupLogs(); break;
+      case "toggle-log-types": toggleLogTypeMenu(); break;
       case "close-modal": closeModal(); break;
       case "add-status": addStatus(); break;
       case "rename-status": renameStatus(el); break;
@@ -806,12 +887,14 @@
   });
 
   document.addEventListener("change", function (ev) {
-    if (ev.target && ev.target.id === "logTypeFilter") {
-      state.logType = ev.target.value;
-      updateLogsList();
+    var box = ev.target;
+    if (box && box.type === "checkbox" &&
+        (box.hasAttribute("data-logtype-all") || box.hasAttribute("data-logtype"))) {
+      applyLogTypeChange(box);
+      return;
     }
-    if (ev.target && ev.target.id === "logTimeFilter") {
-      state.logRange = ev.target.value;
+    if (box && box.id === "logTimeFilter") {
+      state.logRange = box.value;
       updateLogsList();
     }
   });
