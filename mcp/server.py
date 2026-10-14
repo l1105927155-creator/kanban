@@ -125,7 +125,7 @@ def get_task(task_id: str) -> dict:
 
 @mcp.tool()
 def create_task(title: str, goal: str = "", note: str = "", status: str = "") -> dict:
-    """创建任务。默认采用看板的首个状态。"""
+    """创建任务，默认使用首个状态。goal 写预期成果，note 只写长期有效的背景、约束或注意事项；勿将执行流水账写入备注。"""
     data = {"title": title, "goal": goal, "note": note}
     if status:
         data["status"] = status
@@ -136,7 +136,7 @@ def create_task(title: str, goal: str = "", note: str = "", status: str = "") ->
 def update_task(task_id: str, title: Optional[str] = None,
                 goal: Optional[str] = None, note: Optional[str] = None,
                 status: Optional[str] = None) -> dict:
-    """更新任务字段及状态。只有实际传入的字段才修改，已完成需满足任务验收条件。"""
+    """只更新传入字段。goal 保留任务目标，note 仅记录长期有效的信息，不要反复追加阶段报告、测试明细或操作流水；进展请用 add_progress。标记完成前确认验收条件。"""
     body = {k: v for k, v in
             {"title": title, "goal": goal, "note": note, "status": status}.items()
             if v is not None}
@@ -147,7 +147,7 @@ def update_task(task_id: str, title: Optional[str] = None,
 
 @mcp.tool()
 def add_progress(task_id: str, text: str) -> dict:
-    """向任务追加独立的进展/阻塞/验证记录，不覆盖任务备注。"""
+    """追加简短进展摘要：写已完成的结果、重要发现或阻塞及必要的下一步，通常一句话即可。避免目录路径、文件清单、提交哈希、命令、测试数量及完整排查过程；只有对后续决策确有必要时才保留细节。若前述判断被推翻，应明确记录结论变更。不覆盖备注。"""
     if not text.strip():
         raise ValueError("进展内容不能为空")
     return _api("/api/tasks/" + task_id + "/progress", "POST", {"text": text})
