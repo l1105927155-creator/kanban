@@ -21,6 +21,7 @@
     update: { label: "修改", cls: "t-update" },
     archive: { label: "归档", cls: "t-archive" },
     restore: { label: "恢复", cls: "t-restore" },
+    progress: { label: "进展", cls: "t-update" },
     delete: { label: "删除", cls: "t-delete" }
   };
   var FIELD_LABEL = { title: "标题", goal: "目标", note: "备注", status: "状态" };
@@ -246,7 +247,7 @@
       parts.push(c.to || "");
     });
     var snap = log.snapshot || {};
-    parts.push(snap.title || "", snap.goal || "", snap.note || "", snap.status || "");
+    parts.push(snap.title || "", snap.goal || "", snap.note || "", snap.status || "", snap.text || "");
     return parts.join("\n").toLowerCase();
   }
 
@@ -330,6 +331,9 @@
       if (snap.note) parts.push("备注：" + oneLine(snap.note));
       parts.push("初始状态：" + esc(snap.status || ""));
       return "创建任务 " + titleHtml + '<div class="log-sub">' + parts.join("<br>") + '</div>';
+    }
+    if (log.type === "progress") {
+      return "任务进展 " + titleHtml + '<div class="log-sub">' + nl2br((log.snapshot || {}).text || "") + "</div>";
     }
     if (log.type === "view") {
       return "查看任务 " + titleHtml;
@@ -449,7 +453,9 @@
       ? taskLogs.map(function (l) {
           var meta = LOG_TYPE_META[l.type] || { label: l.type, cls: "" };
           var summary;
-          if (l.type === "update") {
+          if (l.type === "progress") {
+            summary = "进展：" + ((l.snapshot || {}).text || "");
+          } else if (l.type === "update") {
             summary = "修改：" + (l.changes || []).map(function (c) {
               return FIELD_LABEL[c.field] || c.field;
             }).join("、");
