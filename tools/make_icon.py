@@ -4,8 +4,10 @@
 处理流程：
   1) 按透明通道裁剪到内容边界；
   2) 整体等比放大到主体纵向占满画布（不改变宽高比），横向溢出的边缘裁掉；
-  3) 用 LANCZOS 逐档下采样，输出 256/128/64/48/32/24/16 共 7 档尺寸的 ICO，
+  3) 用 LANCZOS 逐档下采样，并对小尺寸档做轻度锐化补偿（线条图缩小后易发糊），
+     输出 256/128/64/48/32/24/16 共 7 档尺寸的 ICO，
      保证在桌面、任务栏、窗口、小列表视图等各场景下都清晰。
+  4) ICO 逐帧手工写入（PNG 压缩帧），避免 Pillow 内部用默认插值重新采样各档。
 
 需要 Pillow（仅此工具脚本需要，应用本体零依赖）：
     pip install pillow
@@ -18,11 +20,13 @@
     输出 = ../app/favicon.ico
 """
 
+import io
 import os
+import struct
 import sys
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageFilter
 except ImportError:
     print("此脚本需要 Pillow，请先安装：pip install pillow")
     sys.exit(1)
@@ -69,6 +73,55 @@ def build_master(im, fill=None, left_share=None):
     return canvas
 
 
+def make_frame(master, size):
+    """由母版生成单档图标：LANCZOS 缩放 + 小尺寸锐化补偿。
+
+    精细线条（如动漫贴纸）缩小后天然发糊，任务栏/桌面通常只用到
+    16~48px，因此对小尺寸档做轻度 UnsharpMask，让边缘线条更"立"。
+    """
+    img = master.resize((size, size), Image.LANCZOS)
+    if size <= 64:
+        radius = min(1.2, max(0.4, size / 48.0))
+        percent = 130 if size >= 32 else 100
+        img = img.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=2))
+    elif size <= 128:
+        img = img.filter(ImageFilter.UnsharpMask(radius=0.6, percent=80, threshold=2))
+    return img
+
+
+def save_ico(path, frames):
+    """逐帧手工写 ICO（每帧以 PNG 压缩嵌入，Vista+ 均支持）。
+
+    Pillow 自带的 ICO 保存会对各尺寸用内部默认插值重采样，质量不可控；
+    这里改为每帧都经过 make_frame 的 LANCZOS + 锐化流程后再写入。
+    """
+    frames = sorted(frames, key=lambda im: im.size[0], reverse=True)
+    header = struct.pack("<HHH", 0, 1, len(frames))
+    entries = b""
+    body = b""
+    offset = 6 + 16 * len(frames)
+    for img in frames:
+        s = img.size[0]
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png = buf.getvalue()
+        entries += struct.pack(
+            "<BBBBHHII",
+            0 if s >= 256 else s,  # width，0 表示 256
+            0 if s >= 256 else s,  # height
+            0,  # 调色板色数（PNG 帧固定 0）
+            0,  # 保留
+            1,  # 颜色平面
+            32,  # 位深
+            len(png),
+            offset,
+        )
+        body += png
+        offset += len(png)
+    with open(path, "wb") as f:
+        f.write(header + entries + body)
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(TOOLS_DIR, "icon-source.png")
     out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
@@ -78,7 +131,8 @@ def main():
         print("找不到源图:", src)
         sys.exit(1)
     master = build_master(Image.open(src), fill, left_share)
-    master.save(out, format="ICO", sizes=SIZES)
+    frames = [make_frame(master, s[0]) for s in SIZES]
+    save_ico(out, frames)
     print("图标已生成:", out)
     print("尺寸档:", " / ".join(str(s[0]) for s in SIZES))
     print("源图:", src, "| 母版画布:", "%dx%d" % master.size,

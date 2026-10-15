@@ -10,6 +10,9 @@ port.txt.tmp
 # 导出备份目录
 backup/
 
+# 本机 ACL 恢复/备份产物
+.acl-recovery/
+
 # Python 缓存
 __pycache__/
 *.pyc

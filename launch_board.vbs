@@ -96,13 +96,19 @@ Function IsBoardUp(base)
 End Function
 
 Sub OpenApp(url)
-  Dim chrome, edge
+  Dim chrome, edge, profileDir, args
   chrome = "C:\Program Files\Google\Chrome\Application\chrome.exe"
   edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+  ' 独立配置目录：该实例只有唯一且未登录的配置，Chrome 不会再把用户头像角标
+  ' （紫色熊猫）叠加到任务栏图标右上角；同时独立 favicon 缓存，避免沿用旧的
+  ' 低分辨率图标缓存导致任务栏图标发糊。
+  profileDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\TaskBoard\chrome-profile"
+  args = " --app=" & url & " --user-data-dir=""" & profileDir & """" & _
+         " --no-first-run --no-default-browser-check --window-size=1480,920"
   If fso.FileExists(chrome) Then
-    sh.Run """" & chrome & """ --app=" & url & " --window-size=1480,920", 1, False
+    sh.Run """" & chrome & """" & args, 1, False
   ElseIf fso.FileExists(edge) Then
-    sh.Run """" & edge & """ --app=" & url & " --window-size=1480,920", 1, False
+    sh.Run """" & edge & """" & args, 1, False
   Else
     sh.Run url, 1, False
   End If

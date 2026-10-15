@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from make_icon import build_master  # noqa: E402
+from make_icon import build_master, make_frame  # noqa: E402
 
 SIZES = [48, 72, 96, 128, 144, 192, 256, 512]
 
@@ -27,7 +27,7 @@ def main():
     print("母版尺寸:", master.size)
 
     for s in SIZES:
-        img = master.resize((s, s), Image.LANCZOS)
+        img = make_frame(master, s)
         path = os.path.join(out_dir, "icon-%d.png" % s)
         img.save(path)
         print("  %3dpx -> %s" % (s, os.path.basename(path)))
