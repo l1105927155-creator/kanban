@@ -13,7 +13,19 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 ROOT = Path(__file__).resolve().parent.parent
-mcp = FastMCP("kanban")
+mcp = FastMCP(
+    "kanban",
+    instructions=(
+        "这是用户的个人任务看板，用于管理跨会话的任务目标、备注、状态与进展。"
+        "当用户明确提到看板任务，或说“跟进任务：XXX”“继续之前的 XXX 任务”"
+        "“查看 XXX 任务的进度”等指向已有记录的请求时，"
+        "先用 list_tasks 查找，再用 get_task 读取目标和历史，之后开展工作。"
+        "标题可能不完全一致；无法唯一匹配时不要擅自选择。"
+        "不要将一般性的工作请求一律视为看板任务，也不要仅因查询而创建任务。"
+        "执行过程中按需使用 add_progress 记录简短成果；"
+        "仅在通过验收后才将状态更新为完成。"
+    ),
+)
 BASE = None
 _child = None
 
@@ -106,7 +118,10 @@ def _task(task_id):
 
 @mcp.tool()
 def list_tasks(keyword: str = "", status: str = "", include_archived: bool = False) -> dict:
-    """列出看板任务。支持标题关键词、状态筛选，默认不含归档任务。"""
+    """查找个人任务看板中的已有任务。用户说“跟进任务：XXX”“继续 XXX 任务”
+    “查看 XXX 进度”或要求恢复某项已记录的工作时，先用此工具按标题关键词搜索，
+    再调用 get_task 读取目标、备注与历史记录。支持状态筛选；默认不含归档任务。
+    找不到时可调整关键词或按需搜索归档任务，不要假定任务存在。"""
     data = _api("/api/state")
     tasks = [t for t in data["tasks"] if
              (include_archived or not t.get("archived")) and
@@ -117,7 +132,8 @@ def list_tasks(keyword: str = "", status: str = "", include_archived: bool = Fal
 
 @mcp.tool()
 def get_task(task_id: str) -> dict:
-    """获取任务完整内容及全部关联操作日志，评估需求与验收依据。"""
+    """读取匹配任务的完整目标、备注及历史操作日志。跟进或恢复看板任务时，
+    先读取这些内容，再制定行动和判断验收；task_id 来自 list_tasks 的结果。"""
     task = _task(task_id)
     logs = [entry for entry in _api("/api/logs")["logs"] if entry.get("taskId") == task_id]
     return {"task": task, "logs": logs}
@@ -125,7 +141,9 @@ def get_task(task_id: str) -> dict:
 
 @mcp.tool()
 def create_task(title: str, goal: str = "", note: str = "", status: str = "") -> dict:
-    """创建任务，默认使用首个状态。goal 写预期成果，note 只写长期有效的背景、约束或注意事项；勿将执行流水账写入备注。"""
+    """用户要求将新任务加入看板时创建记录；“跟进已有任务”不是创建指令。
+    默认使用首个状态。goal 写预期成果，note 只写长期有效的背景、约束或注意事项；
+    勿将执行流水账写入备注。"""
     data = {"title": title, "goal": goal, "note": note}
     if status:
         data["status"] = status
