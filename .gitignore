@@ -16,3 +16,4 @@ backup/
 # Python 缓存
 __pycache__/
 *.pyc
+remote-url.txt

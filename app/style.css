@@ -696,3 +696,80 @@ body {
   .cards-fold-inner { min-height: 0; overflow: hidden; }
   .column:not(.expanded) .cards-fold { grid-template-rows: 0fr; }
 }
+
+/* ---------- 状态说明（看板列 / 任务详情 / 状态管理） ---------- */
+
+.column-desc {
+  padding: 0 12px 6px;
+  margin-top: -2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-desc-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.status-row-full {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.status-row-full input[type="text"],
+.status-row-full .status-desc-input {
+  width: 100%;
+}
+
+.status-row-full input[type="text"] {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.status-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-row-top input[type="text"] {
+  flex: 0 0 25%;
+  min-width: 0;
+}
+
+.status-row-top .usage {
+  flex: none;
+}
+
+.status-row-top .btn {
+  margin-left: auto;
+}
+
+.status-desc-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface);
+  resize: vertical;
+}
+
+.status-desc-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, .14);
+  outline: none;
+}

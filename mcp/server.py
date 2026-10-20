@@ -62,6 +62,17 @@ def _find_board():
 
 def _base():
     global BASE, _child
+    endpoint_file = ROOT / "remote-url.txt"
+    remote = os.environ.get("TASK_BOARD_URL", "").strip()
+    if not remote and endpoint_file.exists():
+        remote = endpoint_file.read_text(encoding="utf-8").strip()
+    if remote:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(remote)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username:
+            raise RuntimeError("TASK_BOARD_URL 必须为 HTTP(S) 服务根地址")
+        # Remote failures must never create a separate local database.
+        return remote.rstrip("/")
     if BASE and _check(int(BASE.rsplit(":", 1)[1])):
         return BASE
     BASE = _find_board()
@@ -127,7 +138,18 @@ def list_tasks(keyword: str = "", status: str = "", include_archived: bool = Fal
              (include_archived or not t.get("archived")) and
              (not status or t.get("status") == status) and
              (not keyword or keyword.casefold() in t.get("title", "").casefold())]
-    return {"statuses": data["statuses"], "tasks": tasks}
+    return {
+        "statuses": data["statuses"],
+        "statusDescriptions": data.get("statusDescriptions", {}),
+        "tasks": tasks,
+    }
+
+
+@mcp.tool()
+def set_status_description(name: str, description: str) -> dict:
+    """设置某个状态的简短说明（可留空清除）。说明会展示在看板列标题与任务详情中。"""
+    return _api("/api/statuses/description", "POST",
+                {"name": name, "description": description})
 
 
 @mcp.tool()

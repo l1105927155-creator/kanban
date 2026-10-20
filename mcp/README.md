@@ -91,7 +91,32 @@ dsh plugin --profile desktop add dsh-mcp-connector
 
 ## 使用边界
 
-- 仅支持与看板服务在**同一台主机**上的 stdio MCP；远程电脑需先通过 SSH 等方式在远端启动 MCP。
+- stdio MCP 可与后端分机运行；通过 TASK_BOARD_URL 或 remote-url.txt 指向局域网后端。
 - 状态名来自看板配置，更新状态必须使用实际存在的状态值。
 - `update_task` 能修改“已完成”，但是否满足验收标准必须由 Agent 根据原需求和证据判断。
 - MCP 使用已有的 `X-Board-Request: 1` 本地写入接口保护，不向外网开放服务。
+
+
+## 局域网后端（Linux / Windows）
+
+后端仍只依赖 Python 标准库，前端由同一服务提供。默认保持本机模式。
+例如在 Linux 197 上运行（应使用固定局域网地址）：
+
+```sh
+TASK_BOARD_HOST=192.168.0.197 TASK_BOARD_PORT=8737 TASK_BOARD_ALLOWED_CLIENTS=192.168.0.21/32,192.168.0.197/32 python3 server.py
+```
+
+TASK_BOARD_DATA_DIR 可指定数据目录。显式指定端口时，占用会报错，不顺延。
+只绑定指定网卡；所有页面和 API 均检查客户端白名单及 Host，写入还校验同源 Origin 与 X-Board-Request。
+这是受信局域网部署，不提供账户、TLS 或公网发布能力。
+
+客户端打开 http://192.168.0.197:8737/。本机 MCP 设置环境变量 TASK_BOARD_URL=http://192.168.0.197:8737，
+或在项目根目录放置 remote-url.txt（仅一行该 URL，末尾不加斜线）。Windows 启动器也读取该文件，直接打开远端页面。
+远端不可用时明确报错，不自动启动本机后端，避免产生两份数据。
+MCP 本身保持 stdio，无须额外开放 MCP 网络端口；工具通过局域网 HTTP API 操作同一个后端。
+已有 MCP 进程需重启后载入新代码；仅修改 URL 文件时每次调用都会重新读取。
+
+迁移前备份原 data.json，停止旧后端写入，将完整数据文件复制到远端数据目录，再切换客户端。
+回退时先停远端并把最新 data.json 复制回本机，再移除 remote-url.txt，避免丢失迁移后写入。
+
+本机保留的 127.0.0.1 服务在配置 remote-url.txt 后仅转发请求，不再写入本机 data.json；旧书签和已启动的 MCP 也访问远端同一份数据。197 的用户级 task-board.service 已设置开机运行（Linger=yes），可通过 systemctl --user status/restart task-board.service 管理。

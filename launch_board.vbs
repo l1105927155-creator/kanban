@@ -1,7 +1,9 @@
 Option Explicit
 ' 个人任务看板 - 启动器
 ' 逻辑：服务启动时会把端口写入 port.txt；启动器直接读取该文件，无需扫描端口段。
-'       未运行则用 pyw 无窗口启动 server.py，等端口文件出现且可用后打开应用窗口。
+'       未运行则用 pyw 无窗口启动 server.py，等端口文件出现且可用后打开看板。
+'       优先以已安装的「个人任务看板」网页应用窗口打开（任务栏图标走 manifest
+'       高清图标）；未安装或端口顺延时回退为 --app 应用窗口。
 
 Dim fso, sh, appDir, portFile, baseUrl
 
@@ -9,6 +11,20 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 appDir = fso.GetParentFolderName(WScript.ScriptFullName)
 portFile = fso.BuildPath(appDir, "port.txt")
+
+Dim remoteFile, remoteStream
+remoteFile = fso.BuildPath(appDir, "remote-url.txt")
+If fso.FileExists(remoteFile) Then
+  Set remoteStream = fso.OpenTextFile(remoteFile, 1)
+  baseUrl = Trim(remoteStream.ReadAll)
+  remoteStream.Close
+  If Not IsBoardUp(baseUrl) Then
+    MsgBox "Remote board unavailable: " & baseUrl, 16, "Task Board"
+    WScript.Quit 1
+  End If
+  OpenApp baseUrl & "/"
+  WScript.Quit 0
+End If
 
 baseUrl = ReadRunning(portFile)
 
@@ -96,13 +112,40 @@ Function IsBoardUp(base)
 End Function
 
 Sub OpenApp(url)
-  Dim chrome, edge, profileDir, args
+  Dim chrome, proxy, edge, profileDir, appId, appOrigin, args
   chrome = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+  proxy = "C:\Program Files\Google\Chrome\Application\chrome_proxy.exe"
   edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-  ' 独立配置目录：该实例只有唯一且未登录的配置，Chrome 不会再把用户头像角标
-  ' （紫色熊猫）叠加到任务栏图标右上角；同时独立 favicon 缓存，避免沿用旧的
-  ' 低分辨率图标缓存导致任务栏图标发糊。
+  ' 独立配置目录：只有一个未登录的配置，Chrome 不会再在窗口右上角叠加用户头像
+  ' 角标（紫色背景熊猫），同时也避开 favicon 缓存，避免沿用旧的低分辨率图标缓存。
   profileDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\TaskBoard\chrome-profile"
+
+  ' 已安装的网页应用（Chrome「安装页面为应用」生成，开始菜单「Chrome 应用」里
+  ' 的「个人任务看板」）。它的窗口图标取自 manifest 里的 192/256 大图，所以任务栏
+  ' 图标清晰；而 --app 窗口的图标取自 favicon（Chromium 上限 32px），高 DPI 下
+  ' 必然发糊。下面两项在安装该应用时确定，其来源端口固定为 8737。
+  appId = "ifelkhjfjmpefpbmfpiobljbipibndab"
+  appOrigin = "http://127.0.0.1:8737"
+
+  ' 服务端口与网页应用来源一致、且该应用确实已安装时，以网页应用方式打开：这样
+  ' 双击桌面图标即可——先启动服务，再以清晰图标的窗口显示看板。
+  If url = (appOrigin & "/") Then
+    If fso.FolderExists(profileDir & "\Default\Web Applications\_crx_" & appId) Then
+      args = " --user-data-dir=""" & profileDir & """" & _
+             " --profile-directory=Default --app-id=" & appId & _
+             " --no-first-run --no-default-browser-check"
+      If fso.FileExists(proxy) Then
+        sh.Run """" & proxy & """" & args, 1, False
+        Exit Sub
+      End If
+      If fso.FileExists(chrome) Then
+        sh.Run """" & chrome & """" & args, 1, False
+        Exit Sub
+      End If
+    End If
+  End If
+
+  ' 回退：端口顺延（非 8737）或尚未安装网页应用时，仍以应用窗口打开。
   args = " --app=" & url & " --user-data-dir=""" & profileDir & """" & _
          " --no-first-run --no-default-browser-check --window-size=1480,920"
   If fso.FileExists(chrome) Then

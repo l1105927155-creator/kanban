@@ -7,6 +7,7 @@
 """
 
 import datetime
+import ipaddress
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import socket
 import sys
 import threading
 import urllib.request
+import urllib.error
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -25,6 +27,12 @@ EXPORT_DIR = os.path.join(DATA_DIR, "backup")
 PORT_RANGE = [int(os.environ["TASK_BOARD_TEST_PORT"])] if "TASK_BOARD_TEST_PORT" in os.environ else list(range(8737, 8747))
 # 运行中服务的端口会写入该文件，启动器直接读取，无需扫描端口段
 PORT_FILE = os.path.join(DATA_DIR, "port.txt")
+HOST = os.environ.get("TASK_BOARD_HOST", "127.0.0.1")
+if "TASK_BOARD_PORT" in os.environ:
+    PORT_RANGE = [int(os.environ["TASK_BOARD_PORT"])]
+ALLOWED_CLIENTS = [ipaddress.ip_network(value.strip()) for value in
+                   os.environ.get("TASK_BOARD_ALLOWED_CLIENTS", "127.0.0.1/32").split(",") if value.strip()]
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", HOST}
 
 DEFAULT_STATUSES = ["待处理", "进行中", "等待中", "已完成"]
 
@@ -88,6 +96,12 @@ def load_data():
     data.setdefault("version", 1)
     if not isinstance(data.get("statuses"), list) or not data["statuses"]:
         data["statuses"] = list(DEFAULT_STATUSES)
+    descs = data.get("statusDescriptions")
+    if not isinstance(descs, dict):
+        descs = {}
+    data["statusDescriptions"] = {
+        str(k): ("" if v is None else str(v)) for k, v in descs.items()
+    }
     if not isinstance(data.get("tasks"), list):
         data["tasks"] = []
     if not isinstance(data.get("logs"), list):
@@ -170,7 +184,9 @@ class BoardServer(ThreadingHTTPServer):
         端口或被 already_running() 挡下，避免半死状态。
     """
 
-    allow_reuse_address = False
+    # Linux SO_REUSEADDR permits restart across TIME_WAIT, without SO_REUSEPORT.
+    # Windows must remain exclusive to prevent concurrent listeners.
+    allow_reuse_address = os.name != "nt"
     daemon_threads = True
 
     def server_bind(self):
@@ -189,13 +205,59 @@ class BoardHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        address = ipaddress.ip_address(self.client_address[0])
+        host = self.headers.get("Host", "").lower().split(":", 1)[0]
+        if host not in ALLOWED_HOSTS or not any(address in network for network in ALLOWED_CLIENTS):
+            self._send_error_json(403, "客户端或访问地址不被允许")
+            return False
+        remote_file = os.path.join(APP_DIR, "remote-url.txt")
+        if HOST == "127.0.0.1" and os.path.isfile(remote_file):
+            self._proxy_remote(remote_file)
+            return False
+        return True
+
+    def _proxy_remote(self, remote_file):
+        """Compatibility for existing local bookmarks and already-running MCP clients."""
+        if self.command not in ("GET", "POST", "PATCH", "DELETE"):
+            return self._send_error_json(405, "不支持的请求方法")
+        if self.command != "GET" and not self._allow_mutation():
+            return
+        try:
+            with open(remote_file, encoding="utf-8") as source:
+                remote = source.read().strip().rstrip("/")
+            from urllib.parse import urlsplit
+            parsed = urlsplit(remote)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.path or parsed.query or parsed.fragment or parsed.username:
+                raise ValueError("远端地址无效")
+            headers = {"X-Board-Request": "1", "Content-Type": "application/json"}
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else None
+            request = urllib.request.Request(remote + self.path, data=body, headers=headers, method=self.command)
+            try:
+                response = urllib.request.urlopen(request, timeout=10)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                content = response.read()
+                self.send_response(response.status)
+                self.send_header("Content-Type", response.headers.get("Content-Type", "application/json"))
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(content)
+        except (OSError, ValueError):
+            self._send_error_json(502, "远端看板不可用，请检查局域网连接")
+
     # ---------- 基础工具 ----------
 
     def _allow_mutation(self):
         # Custom header forces browser CORS preflight and blocks cross-site forms.
         host = self.headers.get("Host", "").lower()
         hostname = host.rsplit(":", 1)[0]
-        if hostname not in ("127.0.0.1", "localhost") or self.headers.get("X-Board-Request") != "1":
+        if hostname not in ALLOWED_HOSTS or self.headers.get("X-Board-Request") != "1":
             self._send_error_json(403, "请求来源不被允许")
             return False
         origin = self.headers.get("Origin")
@@ -276,6 +338,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                 data = load_data()
             return self._send_json({
                 "statuses": data["statuses"],
+                "statusDescriptions": data.get("statusDescriptions", {}),
                 "tasks": data["tasks"],
                 "serverTime": now_iso(),
             })
@@ -322,6 +385,8 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._add_status(body)
         if path == "/api/statuses/rename":
             return self._rename_status(body)
+        if path == "/api/statuses/description":
+            return self._set_status_description(body)
         if path == "/api/statuses/delete":
             return self._delete_status(body)
         return self._send_error_json(404, "接口不存在")
@@ -486,8 +551,24 @@ class BoardHandler(BaseHTTPRequestHandler):
             if name in data["statuses"]:
                 return self._send_error_json(409, "状态名称已存在")
             data["statuses"].append(name)
+            data.setdefault("statusDescriptions", {})
+            data["statusDescriptions"].setdefault(name, "")
             save_data(data)
         return self._send_json({"statuses": data["statuses"]})
+
+    def _set_status_description(self, body):
+        """设置某个状态的说明文字（可留空清除）。"""
+        name = self._clean(body.get("name"))
+        desc = self._clean_multiline(body.get("description"))
+        with _lock:
+            data = load_data()
+            if name not in data["statuses"]:
+                return self._send_error_json(404, "状态不存在")
+            descs = data.setdefault("statusDescriptions", {})
+            if descs.get(name, "") != desc:
+                descs[name] = desc
+                save_data(data)
+        return self._send_json({"ok": True, "name": name, "description": desc})
 
     def _rename_status(self, body):
         old = self._clean(body.get("from"))
@@ -504,6 +585,9 @@ class BoardHandler(BaseHTTPRequestHandler):
                 return self._send_error_json(409, "状态名称已存在")
             idx = data["statuses"].index(old)
             data["statuses"][idx] = new
+            descs = data.setdefault("statusDescriptions", {})
+            if old in descs:
+                descs[new] = descs.pop(old)
             renamed = 0
             ts = now_iso()
             for task in data["tasks"]:
@@ -529,6 +613,7 @@ class BoardHandler(BaseHTTPRequestHandler):
             if len(data["statuses"]) <= 1:
                 return self._send_error_json(409, "至少需要保留一个状态")
             data["statuses"].remove(name)
+            data.get("statusDescriptions", {}).pop(name, None)
             save_data(data)
         return self._send_json({"statuses": data["statuses"]})
 
@@ -574,6 +659,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                 "exportedAt": now_iso(),
                 "version": data.get("version", 1),
                 "statuses": data["statuses"],
+                "statusDescriptions": data.get("statusDescriptions", {}),
                 "tasks": tasks,
                 "logs": logs,
             }
@@ -625,13 +711,13 @@ def is_board_ready(port, timeout=0.4):
     也能返回非空内容。
     """
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+        with socket.create_connection((HOST, port), timeout=0.1):
             pass
     except OSError:
         return False
     try:
         with urllib.request.urlopen(
-                "http://127.0.0.1:%d/api/health" % port, timeout=timeout) as resp:
+                "http://%s:%d/api/health" % (HOST, port), timeout=timeout) as resp:
             if resp.status != 200:
                 return False
             body = json.loads(resp.read().decode("utf-8"))
@@ -641,7 +727,7 @@ def is_board_ready(port, timeout=0.4):
         return False
     try:
         with urllib.request.urlopen(
-                "http://127.0.0.1:%d/" % port, timeout=timeout) as resp:
+                "http://%s:%d/" % (HOST, port), timeout=timeout) as resp:
             return resp.status == 200 and len(resp.read()) > 0
     except Exception:
         return False
@@ -693,8 +779,9 @@ def already_running():
 
 
 def main():
-    with _lock:
-        load_data()  # 确保 data.json 存在
+    if not os.path.isfile(os.path.join(APP_DIR, "remote-url.txt")):
+        with _lock:
+            load_data()  # 确保 data.json 存在
     port = already_running()
     if port:
         # 补写端口文件：即使文件曾被删除，也能让启动器直接读到端口
@@ -705,7 +792,7 @@ def main():
     bound_port = None
     for p in PORT_RANGE:
         try:
-            httpd = BoardServer(("127.0.0.1", p), BoardHandler)
+            httpd = BoardServer((HOST, p), BoardHandler)
             bound_port = p
             break
         except OSError:
@@ -713,7 +800,7 @@ def main():
     if httpd is None:
         print("无法绑定端口 %d-%d，任务看板启动失败。" % (PORT_RANGE[0], PORT_RANGE[-1]))
         sys.exit(1)
-    print("个人任务看板服务已启动：http://127.0.0.1:%d/" % bound_port)
+    print("个人任务看板服务已启动：http://%s:%d/" % (HOST, bound_port))
     write_port_file(bound_port)
     try:
         httpd.serve_forever()

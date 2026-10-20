@@ -17,7 +17,7 @@
 | 后端 | Python 标准库 `ThreadingHTTPServer` | 本机 HTTP API、任务及日志业务逻辑 |
 | 数据层 | 本地 `data.json` | 任务、状态和操作历史的持久化 |
 | MCP 适配层 | Python、MCP SDK、stdio | 向 Codex 等 Agent 提供任务工具，并复用后端 HTTP API |
-| Windows 启动器 | VBScript | 启动/复用后端，以 Chrome 或 Edge 的应用窗口模式打开页面 |
+| Windows 启动器 | VBScript | 启动/复用后端，再以已安装的网页应用窗口打开页面（任务栏为高清图标）；未安装时回退为 Chrome/Edge 的 `--app` 应用窗口 |
 
 ```text
 浏览器（普通网页 / --app 独立窗口）      Codex 等 Agent
@@ -47,6 +47,8 @@ py server.py
 打开 <http://127.0.0.1:8737/>。如果端口被占用，服务会依次尝试 8738–8746，实际端口记录在 `port.txt`。
 
 Windows 也可以双击项目中的 `launch_board.vbs` 启动并打开应用窗口。启动器会尝试复用已运行的看板服务；关闭浏览器窗口不等于停止后台服务。
+
+启动器会先启动/复用服务，再打开看板窗口：若已在 Chrome 中把本页「安装为网页应用」，则直接以该网页应用窗口打开（任务栏图标取自 manifest 的 192/256 大图，清晰不糊）；否则回退为 `--app` 应用窗口（其任务栏图标取自 favicon，Chromium 上限 32px，高 DPI 下会发糊）。网页应用的来源固定为 `http://127.0.0.1:8737`，因此服务端口顺延时只能走回退路径。
 
 ## 连接 Codex（MCP）
 
@@ -108,6 +110,31 @@ tools/               测试及辅助脚本
 
 ## 适用范围
 
-这是面向个人本机使用的工具，HTTP 服务仅绑定 `127.0.0.1`，无账户体系，也不是可直接部署公网的多用户服务。多个 Agent 可以通过各自的 MCP 进程共享同一看板，但并发编辑同一任务时仍需自行协调。
+这是面向个人本机使用的工具，HTTP 服务默认绑定 `127.0.0.1`，支持显式配置局域网地址与客户端白名单，无账户体系，也不是可直接部署公网的多用户服务。多个 Agent 可以通过各自的 MCP 进程共享同一看板，但并发编辑同一任务时仍需自行协调。
 
 更多日常操作及故障排查见 [使用说明](使用说明.md)。
+
+
+## 局域网后端（Linux / Windows）
+
+后端仍只依赖 Python 标准库，前端由同一服务提供。默认保持本机模式。
+例如在 Linux 197 上运行（应使用固定局域网地址）：
+
+```sh
+TASK_BOARD_HOST=192.168.0.197 TASK_BOARD_PORT=8737 TASK_BOARD_ALLOWED_CLIENTS=192.168.0.21/32,192.168.0.197/32 python3 server.py
+```
+
+TASK_BOARD_DATA_DIR 可指定数据目录。显式指定端口时，占用会报错，不顺延。
+只绑定指定网卡；所有页面和 API 均检查客户端白名单及 Host，写入还校验同源 Origin 与 X-Board-Request。
+这是受信局域网部署，不提供账户、TLS 或公网发布能力。
+
+客户端打开 http://192.168.0.197:8737/。本机 MCP 设置环境变量 TASK_BOARD_URL=http://192.168.0.197:8737，
+或在项目根目录放置 remote-url.txt（仅一行该 URL，末尾不加斜线）。Windows 启动器也读取该文件，直接打开远端页面。
+远端不可用时明确报错，不自动启动本机后端，避免产生两份数据。
+MCP 本身保持 stdio，无须额外开放 MCP 网络端口；工具通过局域网 HTTP API 操作同一个后端。
+已有 MCP 进程需重启后载入新代码；仅修改 URL 文件时每次调用都会重新读取。
+
+迁移前备份原 data.json，停止旧后端写入，将完整数据文件复制到远端数据目录，再切换客户端。
+回退时先停远端并把最新 data.json 复制回本机，再移除 remote-url.txt，避免丢失迁移后写入。
+
+本机保留的 127.0.0.1 服务在配置 remote-url.txt 后仅转发请求，不再写入本机 data.json；旧书签和已启动的 MCP 也访问远端同一份数据。197 的用户级 task-board.service 已设置开机运行（Linger=yes），可通过 systemctl --user status/restart task-board.service 管理。

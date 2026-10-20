@@ -1,0 +1,20 @@
+[Unit]
+Description=Personal Kanban LAN backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/abasun/task-board
+Environment=TASK_BOARD_HOST=192.168.0.197
+Environment=TASK_BOARD_PORT=8737
+Environment=TASK_BOARD_ALLOWED_CLIENTS=192.168.0.21/32,192.168.0.197/32
+Environment=TASK_BOARD_DATA_DIR=/home/abasun/task-board
+ExecStart=/usr/bin/python3 /home/abasun/task-board/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

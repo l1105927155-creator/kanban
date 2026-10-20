@@ -4,6 +4,7 @@
 
   var state = {
     statuses: [],
+    statusDescriptions: {}, // 状态名 -> 说明文字（可在状态管理中编辑）
     tasks: [],
     logs: [],
     view: "board",   // board | archive | logs
@@ -123,6 +124,7 @@
 
   function applyServerData(results) {
     state.statuses = results[0].statuses || [];
+    state.statusDescriptions = results[0].statusDescriptions || {};
     state.tasks = results[0].tasks || [];
     state.logs = results[1].logs || [];
     if (results[2] && results[2].rev != null) lastRev = results[2].rev;
@@ -217,10 +219,15 @@
       var body = cards
         ? '<div class="cards-fold"><div class="cards-fold-inner">' + cards + '</div></div>'
         : '<div class="empty-hint">暂无任务</div>';
+      var desc = (state.statusDescriptions[name] || "").trim();
+      var descHtml = desc
+        ? '<div class="column-desc" title="' + esc(desc) + '">' + esc(oneLine(desc)) + '</div>'
+        : "";
       return '<section class="column' + (expanded ? " expanded" : "") + '" data-status="' + esc(name) + '">' +
         '<header class="column-head"><span class="dot" style="background:' + colorFor(index) + '"></span>' +
         '<span class="column-name">' + esc(name) + '</span>' +
         '<span class="column-count">' + list.length + '</span>' + expandBtn + '</header>' +
+        descHtml +
         '<div class="column-body">' + body + '</div>' +
         '</section>';
     }).join("");
@@ -589,12 +596,14 @@
       ? '<button class="btn" data-action="restore-task" data-id="' + esc(id) + '">恢复</button>'
       : '<button class="btn" data-action="archive-task" data-id="' + esc(id) + '">归档</button>';
 
+    var statusDesc = (state.statusDescriptions[task.status] || "").trim();
     openModal(
       '<div class="modal-head"><h2>任务详情</h2><button class="icon-btn" data-action="close-modal">×</button></div>' +
       '<div class="modal-body">' +
       '<h3 class="detail-title">' + esc(task.title) + '</h3>' +
       '<div class="detail-status"><span class="dot" style="background:' + colorFor(statusIndex < 0 ? 0 : statusIndex) + '"></span>' +
       '<span>' + esc(task.status) + '</span>' +
+      (statusDesc ? '<span class="status-desc-hint" title="' + esc(statusDesc) + '">' + esc(oneLine(statusDesc)) + '</span>' : "") +
       (task.archived ? '<span class="archived-tag">已归档</span>' : "") + '</div>' +
       '<section class="detail-section"><h4>目标</h4><p>' +
       (task.goal ? nl2br(task.goal) : '<span class="empty-text">未填写</span>') + '</p></section>' +
@@ -656,28 +665,82 @@
     }).catch(function (err) { toast(err.message, true); });
   }
 
-  function openStatusManager() {
-    var rows = state.statuses.map(function (name) {
-      var used = state.tasks.filter(function (t) { return t.status === name; }).length;
-      return '<div class="status-row" data-name="' + esc(name) + '">' +
-        '<input type="text" value="' + esc(name) + '" autocomplete="off">' +
+  // ---------- 状态管理（草稿式批量保存） ----------
+
+  // 弹窗内所有修改先记入草稿，点击「完成」时一次性保存；中途关闭会提示是否保存
+  var statusDraft = [];    // [{orig, name, desc, descOrig}]，orig 为打开时的名称（新增行为 ""）
+  var statusDeleted = {};  // 待删除的状态名 -> true（保存时才真正删除）
+  var statusOrigDesc = {}; // 打开弹窗时的说明快照（状态名 -> 说明），用于判断说明是否被修改
+  var statusDirty = false; // 是否有未保存的修改
+
+  function statusManagerRowsHtml() {
+    return statusDraft.map(function (item) {
+      var used = state.tasks.filter(function (t) { return t.status === item.name; }).length;
+      return '<div class="status-row status-row-full" data-orig="' + esc(item.orig) + '">' +
+        '<div class="status-row-top">' +
+        '<input type="text" class="status-name-input" value="' + esc(item.name) + '" autocomplete="off">' +
         '<span class="usage">' + used + ' 个任务</span>' +
-        '<button class="btn btn-sm" data-action="rename-status">保存</button>' +
-        '<button class="btn btn-sm btn-danger-ghost" data-action="delete-status" data-name="' + esc(name) + '">删除</button>' +
+        '<button class="btn btn-sm btn-danger-ghost" data-action="delete-status" data-name="' + esc(item.name) + '">删除</button>' +
+        '</div>' +
+        '<textarea class="status-desc-input" rows="2" placeholder="状态说明">' + esc(item.desc) + '</textarea>' +
         '</div>';
     }).join("");
+  }
+
+  function renderStatusManager() {
     openModal(
-      '<div class="modal-head"><h2>状态管理</h2><button class="icon-btn" data-action="close-modal">×</button></div>' +
+      '<div class="modal-head"><h2>状态管理</h2><button class="icon-btn" data-action="close-status-mgmt">×</button></div>' +
       '<div class="modal-body">' +
-      '<p class="hint">可自由新增、重命名、删除状态。重命名会自动应用到使用中的任务；若状态仍被任务使用，需先修改相关任务的状态才能删除。</p>' +
-      '<div class="status-rows">' + rows + '</div>' +
+      '<p class="hint">可自由新增、重命名、删除状态，并为每种状态填写简短说明（会展示在看板列标题和任务详情中）。所有修改在点击「完成」后统一保存；删除操作也需保存后生效。</p>' +
+      '<div class="status-rows">' + statusManagerRowsHtml() + '</div>' +
       '<div class="status-add"><input id="newStatusName" type="text" placeholder="新状态名称，回车或点击添加" autocomplete="off">' +
       '<button class="btn" data-action="add-status">添加</button></div>' +
       '</div>' +
-      '<div class="modal-foot"><button class="btn btn-primary" data-action="close-modal">完成</button></div>');
+      '<div class="modal-foot"><button class="btn btn-primary" data-action="finish-status-mgmt">完成</button></div>');
   }
 
-  function addStatus() {
+  function openStatusManager() {
+    statusDraft = state.statuses.map(function (name) {
+      var desc = state.statusDescriptions[name] || "";
+      return { orig: name, name: name, desc: desc, descOrig: desc };
+    });
+    statusDeleted = {};
+    statusOrigDesc = {};
+    state.statuses.forEach(function (name) {
+      statusOrigDesc[name] = state.statusDescriptions[name] || "";
+    });
+    statusDirty = false;
+    renderStatusManager();
+  }
+
+  // 把弹窗中当前输入同步回草稿（用于添加/删除行前保存未同步的编辑）。
+  // 注意：当弹窗是确认框等没有状态行的对话框时应跳过，否则会把草稿清空。
+  function syncStatusDraftFromDom() {
+    var modal = document.querySelector("#modalRoot .modal");
+    if (!modal) return;
+    var rows = modal.querySelectorAll(".status-row-full");
+    if (!rows.length) return;
+    statusDraft = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var orig = row.getAttribute("data-orig") || "";
+      var nameInput = row.querySelector(".status-name-input");
+      var descInput = row.querySelector(".status-desc-input");
+      var name = nameInput ? nameInput.value.trim() : "";
+      if (!name) name = orig; // 名称被清空时保留原名，保存时校验
+      statusDraft.push({
+        orig: orig, name: name,
+        desc: descInput ? descInput.value.trim() : "",
+        descOrig: statusOrigDesc[orig] || "",
+      });
+    }
+  }
+
+  function markStatusDirty() {
+    statusDirty = true;
+  }
+
+  function addStatusRow() {
     var name = val("newStatusName").trim();
     if (!name) {
       toast("请输入状态名称", true);
@@ -685,30 +748,142 @@
       if (input) input.focus();
       return;
     }
-    api("/api/statuses", "POST", { name: name }).then(function () {
-      toast("状态已添加");
-      return refresh();
-    }).then(openStatusManager).catch(function (err) { toast(err.message, true); });
+    syncStatusDraftFromDom();
+    // 「待删除」的状态尚未真正保存删除，重新添加视为撤销删除并恢复原说明
+    if (name in statusDeleted) {
+      delete statusDeleted[name];
+      var desc = statusOrigDesc[name] || "";
+      statusDraft.push({ orig: name, name: name, desc: desc, descOrig: desc });
+      statusDirty = true;
+      renderStatusManager();
+      toast("已恢复状态「" + name + "」");
+      return;
+    }
+    var exists = statusDraft.some(function (item) { return item.name === name; }) ||
+      state.statuses.indexOf(name) >= 0;
+    if (exists) { toast("状态名称已存在", true); return; }
+    statusDraft.push({ orig: "", name: name, desc: "", descOrig: "" });
+    statusDirty = true;
+    renderStatusManager();
   }
 
-  function renameStatus(el) {
-    var row = el.closest(".status-row");
-    var input = row ? row.querySelector("input") : null;
-    var oldName = row ? row.getAttribute("data-name") : "";
-    var newName = input ? input.value.trim() : "";
-    if (!newName) { toast("状态名称不能为空", true); return; }
-    if (newName === oldName) { toast("名称没有变化"); return; }
-    api("/api/statuses/rename", "POST", { from: oldName, to: newName }).then(function (result) {
-      toast(result.renamed ? ("状态已重命名，并同步更新了 " + result.renamed + " 个任务") : "状态已重命名");
-      return refresh();
-    }).then(openStatusManager).catch(function (err) { toast(err.message, true); });
+  function openDeleteStatusConfirm(name) {
+    // 此时弹窗仍是状态管理列表，先把未同步的编辑写回草稿，再打开确认框
+    syncStatusDraftFromDom();
+    var item = statusDraft.filter(function (it) { return it.name === name; })[0];
+    if (!item) return;
+    if (!item.orig) {
+      // 尚未保存的新增状态：直接从草稿移除即可
+      syncStatusDraftFromDom();
+      statusDraft = statusDraft.filter(function (it) { return !(it.orig === "" && it.name === name); });
+      statusDirty = true;
+      renderStatusManager();
+      toast("已移除未保存的状态");
+      return;
+    }
+    var used = state.tasks.filter(function (t) { return t.status === name; }).length;
+    var warn = used
+      ? "该状态仍被 <b>" + used + "</b> 个任务使用，需先修改这些任务的状态才能删除。"
+      : "删除后无法恢复（保存后生效）。";
+    openModal(
+      '<div class="modal-head"><h2>删除状态</h2><button class="icon-btn" data-action="back-to-status-mgmt">×</button></div>' +
+      '<div class="modal-body">' +
+      '<p class="confirm-text">确定要删除状态「<b>' + esc(name) + '</b>」吗？</p>' +
+      '<p class="warn-text">' + warn + '</p>' +
+      '</div>' +
+      '<div class="modal-foot">' +
+      '<button class="btn" data-action="back-to-status-mgmt">取消</button>' +
+      '<button class="btn btn-danger" data-action="confirm-delete-status-row" data-name="' + esc(name) + '">确认删除</button>' +
+      '</div>');
   }
 
-  function deleteStatus(name) {
-    api("/api/statuses/delete", "POST", { name: name }).then(function () {
-      toast("状态已删除");
+  function confirmDeleteStatusRow(name) {
+    syncStatusDraftFromDom();
+    statusDraft = statusDraft.filter(function (item) { return item.name !== name; });
+    statusDeleted[name] = true;
+    statusDirty = true;
+    renderStatusManager();
+    toast("已标记删除，点击「完成」保存后生效");
+  }
+
+  function validateStatusDraft() {
+    var names = {};
+    for (var i = 0; i < statusDraft.length; i++) {
+      var name = statusDraft[i].name;
+      if (!name) { toast("状态名称不能为空", true); return false; }
+      if (names[name]) { toast("状态名称重复：「" + name + "」", true); return false; }
+      names[name] = true;
+    }
+    return true;
+  }
+
+  function applyStatusDraft() {
+    // 依序执行：删除 -> 新增 -> 重命名 -> 保存说明；任一步失败即中断并提示
+    if (!validateStatusDraft()) return Promise.reject(new Error("__invalid__"));
+    syncStatusDraftFromDom();
+    var steps = [];
+    Object.keys(statusDeleted).forEach(function (name) {
+      steps.push(function () { return api("/api/statuses/delete", "POST", { name: name }); });
+    });
+    statusDraft.forEach(function (item) {
+      if (!item.orig) {
+        steps.push(function () { return api("/api/statuses", "POST", { name: item.name }); });
+      } else if (item.name !== item.orig) {
+        steps.push(function () {
+          return api("/api/statuses/rename", "POST", { from: item.orig, to: item.name });
+        });
+      }
+      if (item.desc !== item.descOrig) {
+        steps.push(function () {
+          return api("/api/statuses/description", "POST", { name: item.name, description: item.desc });
+        });
+      }
+    });
+    return steps.reduce(function (chain, step) {
+      return chain.then(step);
+    }, Promise.resolve());
+  }
+
+  function finishStatusMgmt() {
+    if (!statusDirty) { closeModal(); return; }
+    applyStatusDraft().then(function () {
+      statusDirty = false;
+      closeModal();
+      toast("状态修改已保存");
       return refresh();
-    }).then(openStatusManager).catch(function (err) { toast(err.message, true); });
+    }).catch(function (err) {
+      if (err && err.message !== "__invalid__") toast(err.message, true);
+    });
+  }
+
+  function closeStatusMgmt() {
+    if (!statusDirty) { closeModal(); return; }
+    openModal(
+      '<div class="modal-head"><h2>未保存的修改</h2><button class="icon-btn" data-action="close-status-mgmt">×</button></div>' +
+      '<div class="modal-body">' +
+      '<p class="confirm-text">状态管理中有未保存的修改，是否保存？</p>' +
+      '<p class="warn-text">放弃修改将撤销本次所有的增删改操作。</p>' +
+      '</div>' +
+      '<div class="modal-foot">' +
+      '<button class="btn" data-action="discard-status-mgmt">放弃修改</button>' +
+      '<button class="btn btn-primary" data-action="save-close-status-mgmt">保存并关闭</button>' +
+      '</div>');
+  }
+
+  function discardStatusMgmt() {
+    statusDirty = false;
+    closeModal();
+  }
+
+  function saveCloseStatusMgmt() {
+    applyStatusDraft().then(function () {
+      statusDirty = false;
+      closeModal();
+      toast("状态修改已保存");
+      return refresh();
+    }).catch(function (err) {
+      if (err && err.message !== "__invalid__") toast(err.message, true);
+    });
   }
 
   function logRangeLabel(value) {
@@ -880,9 +1055,14 @@
       case "confirm-cleanup-logs": confirmCleanupLogs(); break;
       case "toggle-log-types": toggleLogTypeMenu(); break;
       case "close-modal": closeModal(); break;
-      case "add-status": addStatus(); break;
-      case "rename-status": renameStatus(el); break;
-      case "delete-status": deleteStatus(el.getAttribute("data-name") || ""); break;
+      case "add-status": addStatusRow(); break;
+      case "delete-status": openDeleteStatusConfirm(el.getAttribute("data-name") || ""); break;
+      case "confirm-delete-status-row": confirmDeleteStatusRow(el.getAttribute("data-name") || ""); break;
+      case "back-to-status-mgmt": renderStatusManager(); break;
+      case "finish-status-mgmt": finishStatusMgmt(); break;
+      case "close-status-mgmt": closeStatusMgmt(); break;
+      case "discard-status-mgmt": discardStatusMgmt(); break;
+      case "save-close-status-mgmt": saveCloseStatusMgmt(); break;
     }
   });
 
@@ -900,15 +1080,20 @@
   });
 
   document.addEventListener("input", function (ev) {
-    if (ev.target && ev.target.id === "logKeywordFilter") {
-      state.logKeyword = ev.target.value.trim();
+    var t = ev.target;
+    if (t && (t.classList.contains("status-name-input") ||
+              t.classList.contains("status-desc-input"))) {
+      statusDirty = true;
+    }
+    if (t && t.id === "logKeywordFilter") {
+      state.logKeyword = t.value.trim();
       updateLogsList();
     }
   });
 
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && ev.target) {
-      if (ev.target.id === "newStatusName") { addStatus(); }
+      if (ev.target.id === "newStatusName") { addStatusRow(); }
       else if (ev.target.id === "ntTitle") { saveNewTask(); }
     }
   });
